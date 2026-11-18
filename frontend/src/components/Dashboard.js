@@ -87,10 +87,10 @@ export default function Dashboard() {
         const fetchData = async () => {
             try {
                 const [resGames, resBat, resPit, resPlayers] = await Promise.all([
-                    fetch('http://127.0.0.1:8000/api/games/'),
-                    fetch('http://127.0.0.1:8000/api/excel-batting/'),
-                    fetch('http://127.0.0.1:8000/api/excel-pitching/'),
-                    fetch('http://127.0.0.1:8000/api/players/')
+                    fetch('https://logistars-backend.onrender.com/api/games/'),
+                    fetch('https://logistars-backend.onrender.com/api/excel-batting/'),
+                    fetch('https://logistars-backend.onrender.com/api/excel-pitching/'),
+                    fetch('https://logistars-backend.onrender.com/api/players/')
                 ]);
 
                 if (resGames.ok && resBat.ok && resPit.ok && resPlayers.ok) {

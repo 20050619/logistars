@@ -99,7 +99,7 @@ export default function Home() {
   };
 
   // ★復刻：通信失敗時にデモデータ（山田太郎など）を表示する
-  const fetchPlayers = () => fetch('http://127.0.0.1:8000/api/players/')
+  const fetchPlayers = () => fetch('https://logistars-backend.onrender.com/api/players/')
     .then(res => {
         if (!res.ok) throw new Error('API Error');
         return res.json();
@@ -115,7 +115,7 @@ export default function Home() {
         ]));
     });
   
-  const fetchGames = () => fetch('http://127.0.0.1:8000/api/games/')
+  const fetchGames = () => fetch('https://logistars-backend.onrender.com/api/games/')
     .then(res => {
         if (!res.ok) throw new Error('API Error');
         return res.json();
@@ -130,25 +130,25 @@ export default function Home() {
 
   const fetchExcelResults = async (gameId) => {
       try {
-          const resBat = await fetch('http://127.0.0.1:8000/api/excel-batting/');
+          const resBat = await fetch('https://logistars-backend.onrender.com/api/excel-batting/');
           if (resBat.ok) setGameBattingResults((await resBat.json()).filter(r => String(r.game) === String(gameId)));
-          const resPit = await fetch('http://127.0.0.1:8000/api/excel-pitching/');
+          const resPit = await fetch('https://logistars-backend.onrender.com/api/excel-pitching/');
           if (resPit.ok) setGamePitchingResults((await resPit.json()).filter(r => String(r.game) === String(gameId)));
       } catch (err) { }
   };
 
   const fetchAllResults = async () => {
       try {
-          const resBat = await fetch('http://127.0.0.1:8000/api/excel-batting/');
+          const resBat = await fetch('https://logistars-backend.onrender.com/api/excel-batting/');
           if (resBat.ok) setAllBattingResults(await resBat.json());
           
-          const resPit = await fetch('http://127.0.0.1:8000/api/excel-pitching/');
+          const resPit = await fetch('https://logistars-backend.onrender.com/api/excel-pitching/');
           if (resPit.ok) setAllPitchingResults(await resPit.json());
 
-          const resAb = await fetch('http://127.0.0.1:8000/api/at-bats/');
+          const resAb = await fetch('https://logistars-backend.onrender.com/api/at-bats/');
           if (resAb.ok) setAtBatRecords(await resAb.json());
 
-          const resPitch = await fetch('http://127.0.0.1:8000/api/pitches/');
+          const resPitch = await fetch('https://logistars-backend.onrender.com/api/pitches/');
           if (resPitch.ok) setPitchRecords(await resPitch.json());
 
       } catch (err) { 
@@ -166,7 +166,7 @@ export default function Home() {
     setSeasonEndMonth(localStorage.getItem('logistars_season_end_month') || '3');
     setSeasonEndDay(localStorage.getItem('logistars_season_end_day') || '31');
 
-    fetch('http://127.0.0.1:8000/api/teams/')
+    fetch('https://logistars-backend.onrender.com/api/teams/')
       .then(res => res.ok ? res.json() : Promise.reject())
       .then(data => {
         if (data.length > 0) { 
@@ -347,7 +347,7 @@ export default function Home() {
       if (!teamId) { Swal.fire('エラー', 'チームが読み込まれていないか、APIに接続できません', 'error'); return; }
       
       setIsPlayerSubmitting(true);
-      const url = editingPlayer ? `http://127.0.0.1:8000/api/players/${editingPlayer.id}/` : 'http://127.0.0.1:8000/api/players/';
+      const url = editingPlayer ? `https://logistars-backend.onrender.com/api/players/${editingPlayer.id}/` : 'https://logistars-backend.onrender.com/api/players/';
       const method = editingPlayer ? 'PATCH' : 'POST';
       
       const payload = { ...playerForm, team: teamId };
@@ -383,7 +383,7 @@ export default function Home() {
                   return;
               }
               try {
-                  const req = await fetch(`http://127.0.0.1:8000/api/players/${player.id}/`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({retirementDate:res.value})}); 
+                  const req = await fetch(`https://logistars-backend.onrender.com/api/players/${player.id}/`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({retirementDate:res.value})}); 
                   if (req.ok) { fetchPlayers(); } else { Swal.fire('エラー', '通信に失敗しました', 'error'); }
               } catch(e) { Swal.fire('エラー', 'サーバーに接続できません', 'error'); }
           } 
@@ -399,7 +399,7 @@ export default function Home() {
                   return;
               }
               try {
-                  const req = await fetch(`http://127.0.0.1:8000/api/players/${player.id}/`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({retirementDate:null})}); 
+                  const req = await fetch(`https://logistars-backend.onrender.com/api/players/${player.id}/`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({retirementDate:null})}); 
                   if (req.ok) { fetchPlayers(); } else { Swal.fire('エラー', '通信に失敗しました', 'error'); }
               } catch(e) { Swal.fire('エラー', 'サーバーに接続できません', 'error'); }
           } 
@@ -426,7 +426,7 @@ export default function Home() {
       }
 
       setIsSubmitting(true);
-      const url = editingGame ? `http://127.0.0.1:8000/api/games/${editingGame.id}/` : 'http://127.0.0.1:8000/api/games/';
+      const url = editingGame ? `https://logistars-backend.onrender.com/api/games/${editingGame.id}/` : 'https://logistars-backend.onrender.com/api/games/';
       const method = editingGame ? 'PATCH' : 'POST';
 
       try { 
@@ -451,7 +451,7 @@ export default function Home() {
                   Swal.fire('削除完了', 'デモ環境の試合を削除しました。', 'success'); return;
               }
               try {
-                  const res = await fetch(`http://127.0.0.1:8000/api/games/${game.id}/`, { method: 'DELETE' });
+                  const res = await fetch(`https://logistars-backend.onrender.com/api/games/${game.id}/`, { method: 'DELETE' });
                   if (res.ok) { fetchGames(); fetchAllResults(); Swal.fire('削除完了', '試合を削除しました。', 'success'); } 
                   else { Swal.fire('エラー', '削除に失敗しました', 'error'); }
               } catch(e) { Swal.fire('通信エラー', 'サーバーに接続できません', 'error'); }
@@ -467,7 +467,7 @@ export default function Home() {
           setSelectedGame(updatedGame); setIsScoreModalOpen(false); Swal.fire('スコア更新', 'デモ環境でスコアを更新しました。', 'success'); return;
       }
       try {
-          const res = await fetch(`http://127.0.0.1:8000/api/games/${selectedGame.id}/`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(scoreData) });
+          const res = await fetch(`https://logistars-backend.onrender.com/api/games/${selectedGame.id}/`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(scoreData) });
           if (res.ok) { 
               const updatedGame = await res.json(); 
               setIsScoreModalOpen(false); 
@@ -483,7 +483,7 @@ export default function Home() {
       setIsUploading(true);
       const formData = new FormData(); formData.append('file', file); formData.append('type', uploadType);
       try {
-          const res = await fetch(`http://127.0.0.1:8000/api/games/${selectedGame.id}/upload-excel/`, { method: 'POST', body: formData });
+          const res = await fetch(`https://logistars-backend.onrender.com/api/games/${selectedGame.id}/upload-excel/`, { method: 'POST', body: formData });
           const data = await res.json();
           if (res.ok) { Swal.fire({ title: '一括取込 成功！', text: data.message, icon: 'success' }); fetchExcelResults(selectedGame.id); fetchAllResults(); } 
           else { Swal.fire({ title: '取込エラー', text: data.error || '通信に失敗しました', icon: 'error' }); }
