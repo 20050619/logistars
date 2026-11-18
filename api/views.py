@@ -4,12 +4,16 @@ from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 import pandas as pd
 
-from .models import Team, Player, Game, AtBatRecord, PitchRecord, GameBattingResult, GamePitchingResult
-from .serializers import (
-    TeamSerializer, PlayerSerializer, GameSerializer, 
-    AtBatRecordSerializer, PitchRecordSerializer, 
-    GameBattingResultSerializer, GamePitchingResultSerializer
+from .models import (
+    Team, Player, AppUser, Game, AtBatRecord, PitchRecord, 
+    GameBattingResult, GamePitchingResult, PhysicalRecord
 )
+from .serializers import (
+    TeamSerializer, PlayerSerializer, AppUserSerializer, GameSerializer, 
+    AtBatRecordSerializer, PitchRecordSerializer, 
+    GameBattingResultSerializer, GamePitchingResultSerializer, PhysicalRecordSerializer
+)
+
 
 class TeamViewSet(viewsets.ModelViewSet):
     queryset = Team.objects.all()
@@ -158,3 +162,10 @@ class GameBattingResultViewSet(viewsets.ModelViewSet):
 class GamePitchingResultViewSet(viewsets.ModelViewSet):
     queryset = GamePitchingResult.objects.all()
     serializer_class = GamePitchingResultSerializer
+class AppUserViewSet(viewsets.ModelViewSet):
+    queryset = AppUser.objects.all().order_by('-id')
+    serializer_class = AppUserSerializer
+
+class PhysicalRecordViewSet(viewsets.ModelViewSet):
+    queryset = PhysicalRecord.objects.all().order_by('-date', '-id')
+    serializer_class = PhysicalRecordSerializer

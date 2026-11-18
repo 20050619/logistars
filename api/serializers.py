@@ -1,5 +1,8 @@
 from rest_framework import serializers
-from .models import Team, Player, Game, AtBatRecord, PitchRecord, GameBattingResult, GamePitchingResult
+from .models import (
+    Team, Player, AppUser, Game, AtBatRecord, PitchRecord, 
+    GameBattingResult, GamePitchingResult, PhysicalRecord
+)
 
 class TeamSerializer(serializers.ModelSerializer):
     class Meta: 
@@ -7,12 +10,22 @@ class TeamSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class PlayerSerializer(serializers.ModelSerializer):
-    # ★ ここを追加：React側の retirementDate と Django側の retirement_date を自動で結びつける
     retirementDate = serializers.DateField(source='retirement_date', required=False, allow_null=True)
 
     class Meta: 
         model = Player
         fields = '__all__'
+
+class AppUserSerializer(serializers.ModelSerializer):
+    linkedPlayerId = serializers.PrimaryKeyRelatedField(
+        source='linked_player', queryset=Player.objects.all(), required=False, allow_null=True
+    )
+    isActive = serializers.BooleanField(source='is_active', default=True)
+    mustChangePassword = serializers.BooleanField(source='must_change_password', default=True)
+
+    class Meta:
+        model = AppUser
+        fields = ['id', 'username', 'email', 'password', 'role', 'linkedPlayerId', 'isActive', 'mustChangePassword']
 
 class GameSerializer(serializers.ModelSerializer):
     class Meta: 
@@ -38,3 +51,10 @@ class GamePitchingResultSerializer(serializers.ModelSerializer):
     class Meta: 
         model = GamePitchingResult
         fields = '__all__'
+
+class PhysicalRecordSerializer(serializers.ModelSerializer):
+    playerId = serializers.PrimaryKeyRelatedField(source='player', queryset=Player.objects.all())
+
+    class Meta:
+        model = PhysicalRecord
+        fields = ['id', 'playerId', 'date', 'measurer', 'memo', 'measurements']

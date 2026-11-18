@@ -3,6 +3,12 @@ from django.db import models
 # 1. チーム（テナント）マスタ
 class Team(models.Model):
     name = models.CharField("チーム名", max_length=100)
+    logo = models.TextField("チームロゴ(Base64)", null=True, blank=True)
+    season_start_month = models.IntegerField("年度開始月", default=4)
+    season_start_day = models.IntegerField("年度開始日", default=1)
+    season_end_month = models.IntegerField("年度終了月", default=3)
+    season_end_day = models.IntegerField("年度終了日", default=31)
+    include_retired_stats = models.BooleanField("退団者成績反映", default=False)
     created_at = models.DateTimeField("登録日時", auto_now_add=True)
 
     class Meta:
@@ -18,20 +24,14 @@ class Player(models.Model):
     number = models.IntegerField("背番号", null=True, blank=True)
     name = models.CharField("選手名", max_length=50)
     
-    # 身体データ・基本情報
     birth_date = models.DateField("生年月日", null=True, blank=True)
     height = models.IntegerField("身長(cm)", null=True, blank=True)
     weight = models.FloatField("体重(kg)", null=True, blank=True)
     
     position = models.CharField("ポジション", max_length=20, null=True, blank=True)
     batting_hand = models.CharField("投打", max_length=20, null=True, blank=True)
-    
-    # ★追加: 退団日（この日付を過ぎると退団扱いになる。nullなら現役）
     retirement_date = models.DateField("退団日", null=True, blank=True)
-    
-    # ★追加: 顔写真（Base64エンコードされた文字列を想定してTextFieldを使用）
     photo = models.TextField("顔写真(Base64)", null=True, blank=True)
-    
     is_active = models.BooleanField("在籍状態", default=True)
 
     class Meta:
@@ -41,19 +41,35 @@ class Player(models.Model):
     def __str__(self):
         return self.name
 
+# 2.5 アプリ利用者アカウント（完全DB認証用）
+class AppUser(models.Model):
+    username = models.CharField("ユーザーID", max_length=50, unique=True)
+    email = models.CharField("メールアドレス", max_length=100, null=True, blank=True)
+    password = models.CharField("パスワード", max_length=100)
+    role = models.CharField("権限", max_length=20, default="player") # admin, executive, player
+    linked_player = models.ForeignKey(Player, on_delete=models.SET_NULL, null=True, blank=True)
+    is_active = models.BooleanField("ログイン許可", default=True)
+    must_change_password = models.BooleanField("初期パスワード変更必須", default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "アプリアカウント"
+        verbose_name_plural = "アプリアカウント一覧"
+
+    def __str__(self):
+        return self.username
+
 # 3. 試合・スケジュールデータ
 class Game(models.Model):
     team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name='games', null=True, blank=True)
     date = models.DateField("日付")
     opponent = models.CharField("対戦相手", max_length=100)
-    game_type = models.CharField("試合種別", max_length=50, default="公式戦") # 公式戦、練習試合など
+    game_type = models.CharField("試合種別", max_length=50, default="公式戦")
     location = models.CharField("場所", max_length=100, null=True, blank=True)
-    status = models.CharField("ステータス", max_length=20, default="予定") # 予定, 試合終了
+    status = models.CharField("ステータス", max_length=20, default="予定")
     my_score = models.IntegerField("自チーム得点", null=True, blank=True)
     op_score = models.IntegerField("相手チーム得点", null=True, blank=True)
     notes = models.CharField("備考", max_length=100, null=True, blank=True)
-    
-    # 1回〜9回のイニングスコアを保存するためのJSON箱
     line_score = models.JSONField("スコアボード", default=dict, blank=True, null=True)
 
     class Meta:
@@ -67,23 +83,19 @@ class Game(models.Model):
 class AtBatRecord(models.Model):
     game = models.ForeignKey(Game, on_delete=models.CASCADE, related_name='at_bats')
     batter = models.ForeignKey(Player, on_delete=models.CASCADE, related_name='batting_records')
-    
-    # 状況データ
     inning = models.CharField("イニング", max_length=10, null=True, blank=True)
-    batting_order = models.CharField("打席数", max_length=20, null=True, blank=True) # "1打席目" など
+    batting_order = models.CharField("打席数", max_length=20, null=True, blank=True)
     outs = models.CharField("アウトカウント", max_length=10, null=True, blank=True)
     runner_state = models.CharField("ランナー状況", max_length=50, null=True, blank=True)
     balls = models.IntegerField("ボール", default=0)
     strikes = models.IntegerField("ストライク", default=0)
-    
-    # 投球内容・結果データ
     pitch_type = models.CharField("球種", max_length=50, null=True, blank=True)
-    course = models.CharField("コース", max_length=10, null=True, blank=True)
-    result = models.CharField("打席結果", max_length=50) # 安打、三振、四球など
-    direction = models.CharField("打球方向", max_length=50, null=True, blank=True) # 左翼手、中堅手など
+    course = models.CharField("コース", max_length=20, null=True, blank=True)
+    result = models.CharField("打席結果", max_length=50)
+    direction = models.CharField("打球方向", max_length=50, null=True, blank=True)
     remarks = models.CharField("備考", max_length=200, null=True, blank=True)
-    
     rbi = models.IntegerField("打点", default=0)
+    raw_data = models.JSONField("画面復元用生データ", default=dict, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -97,24 +109,20 @@ class AtBatRecord(models.Model):
 class PitchRecord(models.Model):
     game = models.ForeignKey(Game, on_delete=models.CASCADE, related_name='pitches')
     pitcher = models.ForeignKey(Player, on_delete=models.CASCADE, related_name='pitching_records')
-    
-    # 状況データ
     inning = models.CharField("イニング", max_length=10, null=True, blank=True)
     batter_name = models.CharField("打者名", max_length=50, null=True, blank=True)
     outs = models.CharField("アウトカウント", max_length=10, null=True, blank=True)
     runner_state = models.CharField("ランナー状況", max_length=50, null=True, blank=True)
     balls = models.IntegerField("ボール", default=0)
     strikes = models.IntegerField("ストライク", default=0)
-    
-    # 投球内容・結果データ
     pitch_count = models.IntegerField("球数", null=True, blank=True)
     pitch_type = models.CharField("球種", max_length=50, null=True, blank=True)
-    course = models.CharField("コース", max_length=10, null=True, blank=True) # ①〜⑨、ボール、バントシフト側など
+    course = models.CharField("コース", max_length=20, null=True, blank=True)
     speed = models.IntegerField("球速(km/h)", null=True, blank=True)
-    result = models.CharField("投球結果", max_length=50) # 空振り、見逃しなど
-    direction = models.CharField("打球方向", max_length=50, null=True, blank=True) # 左翼手、中堅手など
+    result = models.CharField("投球結果", max_length=50)
+    direction = models.CharField("打球方向", max_length=50, null=True, blank=True)
     remarks = models.CharField("備考", max_length=200, null=True, blank=True)
-    
+    raw_data = models.JSONField("画面復元用生データ", default=dict, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -201,3 +209,19 @@ class GamePitchingResult(models.Model):
 
     def __str__(self):
         return f"{self.game.date} - {self.player.name} (投手)"
+
+# 8. 身体能力測定データ
+class PhysicalRecord(models.Model):
+    player = models.ForeignKey(Player, on_delete=models.CASCADE, related_name='physical_records')
+    date = models.DateField("測定日")
+    measurer = models.CharField("測定者", max_length=50, null=True, blank=True)
+    memo = models.TextField("過去のケガ・備考", null=True, blank=True)
+    measurements = models.JSONField("測定項目データ", default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "身体能力記録"
+        verbose_name_plural = "身体能力記録一覧"
+
+    def __str__(self):
+        return f"{self.date} - {self.player.name}"
