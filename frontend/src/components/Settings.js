@@ -1,21 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import Swal from 'sweetalert2';
 
-export default function Settings({ players = [] }) {
-    const [users, setUsers] = useState(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('logistars_users');
-            if (saved) return JSON.parse(saved);
-        }
-        return [];
-    });
+const API_BASE = 'https://logistars-backend.onrender.com/api';
 
-    useEffect(() => {
-        if (users.length > 0) {
-            localStorage.setItem('logistars_users', JSON.stringify(users));
-        }
-    }, [users]);
-
+export default function Settings({ players = [], teamId = null, includeRetiredStats = false, onUpdateIncludeRetired }) {
+    const [users, setUsers] = useState([]);
+    const [isLoadingUsers, setIsLoadingUsers] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingUser, setEditingUser] = useState(null);
 
@@ -27,6 +17,25 @@ export default function Settings({ players = [] }) {
         linkedPlayerId: '',
         isActive: true
     });
+
+    const fetchUsers = async () => {
+        setIsLoadingUsers(true);
+        try {
+            const res = await fetch(`${API_BASE}/users/`);
+            if (res.ok) {
+                const data = await res.json();
+                setUsers(data);
+            }
+        } catch (err) {
+            console.error('アカウント一覧の取得失敗:', err);
+        } finally {
+            setIsLoadingUsers(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchUsers();
+    }, []);
 
     const roles = {
         'admin': { label: '管理者', color: 'bg-red-100 text-red-700 border-red-200' },
@@ -46,7 +55,7 @@ export default function Settings({ players = [] }) {
     const handleOpenModal = (user = null) => {
         if (user) {
             setEditingUser(user.id);
-            setFormData({ ...user, password: '' });
+            setFormData({ ...user, linkedPlayerId: user.linkedPlayerId || '', password: '' });
         } else {
             setEditingUser(null);
             setFormData({ username: '', email: '', password: '', role: 'player', linkedPlayerId: '', isActive: true });
@@ -54,7 +63,7 @@ export default function Settings({ players = [] }) {
         setIsModalOpen(true);
     };
 
-    const handleSave = () => {
+    const handleSave = async () => {
         if (!formData.username) {
             Swal.fire('エラー', 'ユーザーIDを入力してください', 'error');
             return;
@@ -64,48 +73,116 @@ export default function Settings({ players = [] }) {
             return;
         }
 
+        const payload = {
+            username: formData.username,
+            email: formData.email || '',
+            role: formData.role,
+            linkedPlayerId: formData.role === 'player' && formData.linkedPlayerId ? parseInt(formData.linkedPlayerId, 10) : null,
+            isActive: formData.isActive
+        };
+
         if (editingUser) {
-            const originalUser = users.find(u => u.id === editingUser);
-            const finalData = formData.password 
-                ? { ...formData, password: formData.password, mustChangePassword: true } 
-                : { ...formData, password: originalUser.password, mustChangePassword: originalUser.mustChangePassword };
-            
-            setUsers(prev => prev.map(u => u.id === editingUser ? { ...finalData, id: editingUser } : u));
-            Swal.fire({ title: '更新完了', text: 'アカウント情報を更新しました。', icon: 'success', timer: 1500, showConfirmButton: false });
+            if (formData.password) {
+                payload.password = formData.password;
+                payload.mustChangePassword = true;
+            }
+            try {
+                const res = await fetch(`${API_BASE}/users/${editingUser}/`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    await fetchUsers();
+                    setIsModalOpen(false);
+                    Swal.fire({ title: '更新完了', text: 'データベースのアカウント情報を更新しました。', icon: 'success', timer: 1500, showConfirmButton: false });
+                } else {
+                    Swal.fire('エラー', '更新に失敗しました（ID重複など）', 'error');
+                }
+            } catch (e) {
+                Swal.fire('通信エラー', 'サーバーに接続できません', 'error');
+            }
         } else {
-            const newUser = { ...formData, id: Date.now(), mustChangePassword: true };
-            setUsers(prev => [newUser, ...prev]);
-            Swal.fire({ title: '登録完了', text: '新しいアカウントを作成しました。', icon: 'success', timer: 1500, showConfirmButton: false });
+            payload.password = formData.password;
+            payload.mustChangePassword = true;
+            try {
+                const res = await fetch(`${API_BASE}/users/`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    await fetchUsers();
+                    setIsModalOpen(false);
+                    Swal.fire({ title: '登録完了', text: '新しいアカウントをデータベースに保存しました。', icon: 'success', timer: 1500, showConfirmButton: false });
+                } else {
+                    Swal.fire('エラー', '登録に失敗しました（同じユーザーIDが既に存在します）', 'error');
+                }
+            } catch (e) {
+                Swal.fire('通信エラー', 'サーバーに接続できません', 'error');
+            }
         }
-        setIsModalOpen(false);
     };
 
     const handleDelete = (id) => {
         Swal.fire({
             title: 'アカウントの削除',
-            text: 'このアカウントを完全に削除しますか？',
+            text: 'このアカウントをデータベースから完全に削除しますか？',
             icon: 'warning',
             showCancelButton: true, confirmButtonColor: '#d33', cancelButtonColor: '#3085d6', confirmButtonText: '削除する'
-        }).then((result) => {
+        }).then(async (result) => {
             if (result.isConfirmed) {
-                setUsers(prev => prev.filter(u => u.id !== id));
-                Swal.fire('削除完了', 'アカウントを削除しました。', 'success');
+                try {
+                    const res = await fetch(`${API_BASE}/users/${id}/`, { method: 'DELETE' });
+                    if (res.ok) {
+                        await fetchUsers();
+                        Swal.fire('削除完了', 'アカウントを削除しました。', 'success');
+                    }
+                } catch (e) {
+                    Swal.fire('通信エラー', '削除に失敗しました', 'error');
+                }
             }
         });
     };
 
-    const toggleStatus = (id) => {
-        setUsers(prev => prev.map(u => u.id === id ? { ...u, isActive: !u.isActive } : u));
+    const toggleStatus = async (user) => {
+        try {
+            const res = await fetch(`${API_BASE}/users/${user.id}/`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ isActive: !user.isActive })
+            });
+            if (res.ok) await fetchUsers();
+        } catch (e) {
+            Swal.fire('エラー', '通信に失敗しました', 'error');
+        }
+    };
+
+    const handleRetiredRadioChange = async (valBool) => {
+        if (onUpdateIncludeRetired) onUpdateIncludeRetired(valBool);
+        localStorage.setItem('logistars_include_retired_stats', valBool ? 'true' : 'false');
+        if (teamId) {
+            try {
+                await fetch(`${API_BASE}/teams/${teamId}/`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ include_retired_stats: valBool })
+                });
+            } catch (e) {}
+        }
+        Swal.fire({
+            title: '設定完了',
+            text: valBool ? '退団者を含めて集計します。' : '退団者を除外して集計します。',
+            icon: 'success', timer: 1500, showConfirmButton: false
+        });
     };
 
     return (
         <div className="space-y-4 animate-fade-in w-full">
-            
-            {/* ★新規追加：退団者データの集計設定（基本・システム設定） */}
             <div className="bg-white border border-slate-200 shadow-sm rounded-xl overflow-hidden mt-4">
                 <div className="bg-[#0b1c3a] px-6 py-4 border-b border-[#1e3a8a] bg-[url('https://www.transparenttextures.com/patterns/cubes.png')]">
                     <h2 className="font-bold text-lg text-white flex items-center gap-2">退団者データの集計設定</h2>
-                    <p className="text-[10px] text-blue-200 mt-1 tracking-wide">チーム成績やランキングに退団者を含めるか設定します</p>
+                    <p className="text-[10px] text-blue-200 mt-1 tracking-wide">チーム成績やランキングに退団者を含めるか設定します（全端末に反映）</p>
                 </div>
                 <div className="p-6">
                     <p className="text-xs font-bold text-slate-700 mb-2">退団選手の成績反映（管理者・役員向け）</p>
@@ -117,12 +194,8 @@ export default function Settings({ players = [] }) {
                             <input 
                                 type="radio" 
                                 name="includeRetired" 
-                                value="true" 
-                                defaultChecked={typeof window !== 'undefined' && localStorage.getItem('logistars_include_retired_stats') === 'true'} 
-                                onChange={() => {
-                                    localStorage.setItem('logistars_include_retired_stats', 'true');
-                                    Swal.fire({title:'設定完了', text:'退団者を含めて集計します。', icon:'success', timer:1500, showConfirmButton:false});
-                                }} 
+                                checked={includeRetiredStats === true} 
+                                onChange={() => handleRetiredRadioChange(true)} 
                                 className="accent-[#0b1c3a] w-4 h-4" 
                             />
                             <span className="font-bold text-slate-700">含める（反映する）</span>
@@ -131,12 +204,8 @@ export default function Settings({ players = [] }) {
                             <input 
                                 type="radio" 
                                 name="includeRetired" 
-                                value="false" 
-                                defaultChecked={typeof window !== 'undefined' && localStorage.getItem('logistars_include_retired_stats') !== 'true'} 
-                                onChange={() => {
-                                    localStorage.setItem('logistars_include_retired_stats', 'false');
-                                    Swal.fire({title:'設定完了', text:'退団者を除外して集計します。', icon:'success', timer:1500, showConfirmButton:false});
-                                }} 
+                                checked={includeRetiredStats === false} 
+                                onChange={() => handleRetiredRadioChange(false)} 
                                 className="accent-[#0b1c3a] w-4 h-4" 
                             />
                             <span className="font-bold text-slate-700">含めない（除外する）</span>
@@ -145,7 +214,6 @@ export default function Settings({ players = [] }) {
                 </div>
             </div>
 
-            {/* 既存のアカウント一覧 */}
             <div className="bg-white border border-slate-200 shadow-sm rounded-xl overflow-hidden mt-4">
                 <div className="bg-[#0b1c3a] px-6 py-4 flex flex-col sm:flex-row justify-between sm:items-center border-b border-[#1e3a8a] bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] gap-4">
                     <div>
@@ -160,84 +228,83 @@ export default function Settings({ players = [] }) {
                 </div>
                 
                 <div className="overflow-x-auto hide-scrollbar">
-                    <table className="w-full text-sm text-left whitespace-nowrap">
-                        <thead className="bg-slate-50 text-slate-500 border-b border-slate-200 text-xs font-bold">
-                            <tr>
-                                <th className="py-3 px-6">ユーザーID / メールアドレス</th>
-                                <th className="py-3 px-4">権限 (ロール)</th>
-                                <th className="py-3 px-4">紐付け選手データ</th>
-                                <th className="py-3 px-4 text-center">ログイン許可</th>
-                                <th className="py-3 px-4 text-center">操作</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                            {users.map(user => {
-                                const role = roles[user.role];
-                                const linkedPlayer = players.find(p => String(p.id) === String(user.linkedPlayerId));
-                                
-                                // ★追加：退団済みかどうかを判定
-                                const today = new Date();
-                                today.setHours(0,0,0,0);
-                                const isRetired = linkedPlayer && linkedPlayer.retirementDate && new Date(linkedPlayer.retirementDate) <= today;
-                                
-                                // 退団済みなら強制的に「非アクティブ」として扱う
-                                const effectiveIsActive = isRetired ? false : user.isActive;
-                                
-                                return (
-                                    <tr key={user.id} className={`hover:bg-slate-50 transition-colors ${!effectiveIsActive ? 'bg-slate-50/50' : ''}`}>
-                                        <td className="py-3 px-6">
-                                            <div className="font-bold text-[#0b1c3a]">{user.username}</div>
-                                            <div className="text-[10px] text-slate-400">{user.email || '-'}</div>
-                                            {user.mustChangePassword && <span className="inline-block mt-1 bg-amber-100 text-amber-700 border border-amber-300 text-[8px] px-1.5 py-0.5 rounded font-bold">初期設定未完了</span>}
-                                        </td>
-                                        <td className="py-3 px-4">
-                                            <span className={`px-2.5 py-1 rounded text-[10px] font-bold border shadow-sm ${role?.color || ''}`}>
-                                                {role?.label || '-'}
-                                            </span>
-                                        </td>
-                                        <td className="py-3 px-4">
-                                            {user.role === 'player' ? (
-                                                linkedPlayer ? (
-                                                    <div className="flex items-center gap-3">
-                                                        <span className="w-8 h-8 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center text-[10px] overflow-hidden">
-                                                            {linkedPlayer.photo ? <img src={linkedPlayer.photo} alt="P" className="w-full h-full object-cover"/> : <span className="text-slate-300">👤</span>}
-                                                        </span>
-                                                        <div>
-                                                            <span className="font-bold text-slate-700 text-xs">{linkedPlayer.name}</span>
-                                                            <span className="text-[9px] text-slate-400 ml-2">#{linkedPlayer.number}</span>
-                                                            {/* ★追加：退団済みの警告 */}
-                                                            {isRetired && <span className="text-[9px] text-red-500 font-bold ml-2">(退団済)</span>}
+                    {isLoadingUsers ? (
+                        <div className="p-8 text-center text-xs text-slate-400 font-bold">データベースから読み込み中...</div>
+                    ) : users.length === 0 ? (
+                        <div className="p-8 text-center text-xs text-slate-500 font-bold">登録されているアカウントはありません。「新規アカウント発行」から作成してください。</div>
+                    ) : (
+                        <table className="w-full text-sm text-left whitespace-nowrap">
+                            <thead className="bg-slate-50 text-slate-500 border-b border-slate-200 text-xs font-bold">
+                                <tr>
+                                    <th className="py-3 px-6">ユーザーID / メールアドレス</th>
+                                    <th className="py-3 px-4">権限 (ロール)</th>
+                                    <th className="py-3 px-4">紐付け選手データ</th>
+                                    <th className="py-3 px-4 text-center">ログイン許可</th>
+                                    <th className="py-3 px-4 text-center">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                                {users.map(user => {
+                                    const role = roles[user.role];
+                                    const linkedPlayer = players.find(p => String(p.id) === String(user.linkedPlayerId));
+                                    const today = new Date(); today.setHours(0,0,0,0);
+                                    const isRetired = linkedPlayer && linkedPlayer.retirementDate && new Date(linkedPlayer.retirementDate) <= today;
+                                    const effectiveIsActive = isRetired ? false : user.isActive;
+                                    
+                                    return (
+                                        <tr key={user.id} className={`hover:bg-slate-50 transition-colors ${!effectiveIsActive ? 'bg-slate-50/50' : ''}`}>
+                                            <td className="py-3 px-6">
+                                                <div className="font-bold text-[#0b1c3a]">{user.username}</div>
+                                                <div className="text-[10px] text-slate-400">{user.email || '-'}</div>
+                                                {user.mustChangePassword && <span className="inline-block mt-1 bg-amber-100 text-amber-700 border border-amber-300 text-[8px] px-1.5 py-0.5 rounded font-bold">初期設定未完了</span>}
+                                            </td>
+                                            <td className="py-3 px-4">
+                                                <span className={`px-2.5 py-1 rounded text-[10px] font-bold border shadow-sm ${role?.color || ''}`}>
+                                                    {role?.label || '-'}
+                                                </span>
+                                            </td>
+                                            <td className="py-3 px-4">
+                                                {user.role === 'player' ? (
+                                                    linkedPlayer ? (
+                                                        <div className="flex items-center gap-3">
+                                                            <span className="w-8 h-8 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center text-[10px] overflow-hidden">
+                                                                {linkedPlayer.photo ? <img src={linkedPlayer.photo} alt="P" className="w-full h-full object-cover"/> : <span className="text-slate-300">👤</span>}
+                                                            </span>
+                                                            <div>
+                                                                <span className="font-bold text-slate-700 text-xs">{linkedPlayer.name}</span>
+                                                                <span className="text-[9px] text-slate-400 ml-2">#{linkedPlayer.number}</span>
+                                                                {isRetired && <span className="text-[9px] text-red-500 font-bold ml-2">(退団済)</span>}
+                                                            </div>
                                                         </div>
-                                                    </div>
-                                                ) : <span className="text-red-500 text-xs font-bold bg-red-50 px-2 py-1 rounded border border-red-200">紐付けなし (未設定)</span>
-                                            ) : (
-                                                <span className="text-slate-300 text-xs">-</span>
-                                            )}
-                                        </td>
-                                        <td className="py-3 px-4 text-center">
-                                            <button 
-                                                onClick={() => !isRetired && toggleStatus(user.id)}
-                                                disabled={isRetired}
-                                                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${effectiveIsActive ? 'bg-emerald-500 shadow-inner' : 'bg-slate-300'} ${isRetired ? 'cursor-not-allowed opacity-60' : ''}`}
-                                            >
-                                                <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-sm transition-transform ${effectiveIsActive ? 'translate-x-4.5' : 'translate-x-1'}`} />
-                                            </button>
-                                            <div className={`text-[9px] mt-1 font-bold ${effectiveIsActive ? 'text-emerald-600' : 'text-slate-400'}`}>
-                                                {/* ★追加：退団済みの場合は「自動ブロック」と表示 */}
-                                                {isRetired ? '自動ブロック' : (effectiveIsActive ? '有効' : 'ブロック')}
-                                            </div>
-                                        </td>
-                                        <td className="py-3 px-4 text-center">
-                                            <div className="flex justify-center gap-2">
-                                                <button onClick={() => handleOpenModal(user)} className="text-[10px] bg-white border border-slate-300 text-blue-600 px-3 py-1.5 rounded shadow-sm hover:bg-blue-50 font-bold transition-colors">✏️ 編集(再設定)</button>
-                                                <button onClick={() => handleDelete(user.id)} className="text-[10px] bg-white border border-slate-300 text-red-500 px-3 py-1.5 rounded shadow-sm hover:bg-red-50 font-bold transition-colors">🗑️ 削除</button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
+                                                    ) : <span className="text-red-500 text-xs font-bold bg-red-50 px-2 py-1 rounded border border-red-200">紐付けなし (未設定)</span>
+                                                ) : (
+                                                    <span className="text-slate-300 text-xs">-</span>
+                                                )}
+                                            </td>
+                                            <td className="py-3 px-4 text-center">
+                                                <button 
+                                                    onClick={() => !isRetired && toggleStatus(user)}
+                                                    disabled={isRetired}
+                                                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${effectiveIsActive ? 'bg-emerald-500 shadow-inner' : 'bg-slate-300'} ${isRetired ? 'cursor-not-allowed opacity-60' : ''}`}
+                                                >
+                                                    <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-sm transition-transform ${effectiveIsActive ? 'translate-x-4.5' : 'translate-x-1'}`} />
+                                                </button>
+                                                <div className={`text-[9px] mt-1 font-bold ${effectiveIsActive ? 'text-emerald-600' : 'text-slate-400'}`}>
+                                                    {isRetired ? '自動ブロック' : (effectiveIsActive ? '有効' : 'ブロック')}
+                                                </div>
+                                            </td>
+                                            <td className="py-3 px-4 text-center">
+                                                <div className="flex justify-center gap-2">
+                                                    <button onClick={() => handleOpenModal(user)} className="text-[10px] bg-white border border-slate-300 text-blue-600 px-3 py-1.5 rounded shadow-sm hover:bg-blue-50 font-bold transition-colors">✏️ 編集(再設定)</button>
+                                                    <button onClick={() => handleDelete(user.id)} className="text-[10px] bg-white border border-slate-300 text-red-500 px-3 py-1.5 rounded shadow-sm hover:bg-red-50 font-bold transition-colors">🗑️ 削除</button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    )}
                 </div>
             </div>
 
@@ -248,13 +315,11 @@ export default function Settings({ players = [] }) {
                             <h3 className="text-white font-bold text-sm tracking-widest">{editingUser ? 'アカウント情報の編集' : '新規アカウントの発行'}</h3>
                             <button onClick={() => setIsModalOpen(false)} className="text-blue-200 hover:text-white font-black">✕</button>
                         </div>
-                        
                         <div className="p-6 space-y-5 overflow-y-auto max-h-[70vh]">
                             <div>
                                 <label className="text-[10px] font-bold text-slate-500 mb-1 flex items-center gap-1">ユーザーID <span className="text-red-500">*</span></label>
                                 <input type="text" value={formData.username} onChange={e => setFormData({...formData, username: e.target.value})} placeholder="ログインに使用するID" className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-bold text-[#0b1c3a] bg-slate-50 focus:bg-white transition-colors" />
                             </div>
-                            
                             <div>
                                 <label className="text-[10px] font-bold text-slate-500 mb-1 flex items-center gap-1">初期(仮)パスワード {editingUser ? '' : <span className="text-red-500">*</span>}</label>
                                 <input 
@@ -266,12 +331,10 @@ export default function Settings({ players = [] }) {
                                 />
                                 <p className="text-[9px] text-blue-600 mt-1 font-bold">※ ここでパスワードを設定すると、選手は次回ログイン時に「強制的にパスワード変更」を求められます。</p>
                             </div>
-
                             <div>
                                 <label className="text-[10px] font-bold text-slate-500 mb-1 block">メールアドレス</label>
                                 <input type="email" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} placeholder="example@logistars.com" className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 text-slate-700 bg-slate-50 focus:bg-white transition-colors" />
                             </div>
-
                             <div className="pt-2 border-t border-dashed border-slate-200">
                                 <label className="text-[10px] font-bold text-slate-500 mb-2 block">権限 (ロール) の割り当て</label>
                                 <div className="grid grid-cols-3 gap-2">
@@ -280,7 +343,6 @@ export default function Settings({ players = [] }) {
                                     <button onClick={() => setFormData({...formData, role: 'player'})} className={`py-2 px-1 rounded-lg border flex flex-col items-center justify-center transition-colors text-[10px] font-bold ${formData.role === 'player' ? 'bg-blue-50 border-blue-400 text-blue-700 ring-1 ring-blue-400 shadow-inner' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50 shadow-sm'}`}><span className="text-lg mb-1">⚾</span>一般選手</button>
                                 </div>
                             </div>
-
                             {formData.role === 'player' && (
                                 <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg animate-fade-in shadow-inner">
                                     <label className="text-[10px] font-bold text-blue-800 mb-1 flex items-center gap-1">紐付ける選手マスタデータ <span className="text-red-500">*</span></label>
@@ -298,7 +360,6 @@ export default function Settings({ players = [] }) {
                                 </div>
                             )}
                         </div>
-
                         <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-3 shrink-0">
                             <button onClick={() => setIsModalOpen(false)} className="px-5 py-2 text-xs font-bold text-slate-600 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 transition-colors shadow-sm">キャンセル</button>
                             <button onClick={handleSave} className="px-6 py-2 text-xs font-bold text-white bg-blue-600 rounded-lg shadow-md hover:bg-blue-700 transition-colors flex items-center gap-1">💾 保存する</button>

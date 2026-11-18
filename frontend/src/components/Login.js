@@ -1,42 +1,47 @@
 import React, { useState, useEffect } from 'react';
 
-// ★修正：引数に players (選手データ) を追加して受け取ります
+const API_BASE = 'https://logistars-backend.onrender.com/api';
+
 export default function Login({ onLogin, teamName, teamLogo, players = [] }) {
     const [userId, setUserId] = useState('');
     const [password, setPassword] = useState('');
     const [errorMsg, setErrorMsg] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const [dbUsers, setDbUsers] = useState([]);
 
     useEffect(() => {
-        if (typeof window !== 'undefined' && !localStorage.getItem('logistars_users')) {
-            const initialUsers = [
-                { id: 1, username: 'admin_manager', email: 'manager@example.com', password: 'admin', role: 'admin', linkedPlayerId: '', isActive: true },
-                { id: 2, username: 'executive_owner', email: 'owner@example.com', password: 'executive', role: 'executive', linkedPlayerId: '', isActive: true },
-                { id: 3, username: 'player_sakuraba', email: 'sakuraba@example.com', password: 'player', role: 'player', linkedPlayerId: '5', isActive: true },
-                { id: 4, username: 'player_retired', email: 'retired@example.com', password: 'player', role: 'player', linkedPlayerId: '4', isActive: false },
-            ];
-            localStorage.setItem('logistars_users', JSON.stringify(initialUsers));
-        }
+        fetch(`${API_BASE}/users/`)
+            .then(res => res.ok ? res.json() : [])
+            .then(data => setDbUsers(data))
+            .catch(err => console.error('ユーザー一覧の取得失敗:', err));
     }, []);
 
-    const handleLogin = (e) => {
+    const handleLogin = async (e) => {
         e.preventDefault();
         setErrorMsg('');
         setIsLoading(true);
 
-        setTimeout(() => {
-            // 救済措置（バックドア）
+        try {
+            // 救済措置（バックドア：DBに管理者が0人の時の緊急用）
             if (userId === 'admin' && password === 'admin') {
-                onLogin('admin', '復旧用管理者');
+                onLogin('admin', '復旧用管理者', null);
                 setIsLoading(false);
                 return;
             }
 
-            const savedUsers = JSON.parse(localStorage.getItem('logistars_users') || '[]');
-            const user = savedUsers.find(u => (u.username === userId || u.email === userId) && u.password === password);
+            // 最新のユーザー一覧をDBから直接取得して照合
+            let usersList = dbUsers;
+            try {
+                const res = await fetch(`${API_BASE}/users/`);
+                if (res.ok) {
+                    usersList = await res.json();
+                    setDbUsers(usersList);
+                }
+            } catch (e) {}
+
+            const user = usersList.find(u => (u.username === userId || u.email === userId) && u.password === password);
 
             if (user) {
-                // ★追加：紐づいている選手が「退団済」かどうかをチェックする
                 let isRetired = false;
                 if (user.role === 'player' && user.linkedPlayerId) {
                     const linkedPlayer = players.find(p => String(p.id) === String(user.linkedPlayerId));
@@ -49,34 +54,31 @@ export default function Login({ onLogin, teamName, teamLogo, players = [] }) {
                     }
                 }
 
-                // 手動でブロックされているか、または退団済みの場合はログイン拒否
                 if (!user.isActive || isRetired) {
                     setErrorMsg('ACCESS DENIED - このアカウントは現在ブロックされています');
                 } else {
-                    onLogin(user.role, user.username);
+                    onLogin(user.role, user.username, user);
                 }
             } else {
                 setErrorMsg('ACCESS DENIED - IDまたはパスワードが違います');
             }
+        } catch (err) {
+            setErrorMsg('サーバーとの通信に失敗しました');
+        } finally {
             setIsLoading(false);
-        }, 800);
+        }
     };
 
     return (
         <div className="h-[100dvh] w-full flex flex-col items-center justify-center relative overflow-hidden bg-[#030816] font-sans selection:bg-cyan-500 selection:text-white">
-            
             <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10 pointer-events-none mix-blend-screen"></div>
-            
             <div className="absolute top-[-10%] left-[-10%] w-[50vw] h-[50vw] max-w-[600px] max-h-[600px] bg-blue-600 rounded-full mix-blend-screen filter blur-[120px] opacity-20 animate-pulse duration-10000"></div>
             <div className="absolute bottom-[-10%] right-[-10%] w-[40vw] h-[40vw] max-w-[500px] max-h-[500px] bg-cyan-500 rounded-full mix-blend-screen filter blur-[100px] opacity-10 animate-pulse duration-7000" style={{ animationDelay: '2s' }}></div>
-            
             <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[size:40px_40px] pointer-events-none"></div>
 
             <div className="w-full max-w-[360px] sm:max-w-sm px-5 relative z-10">
                 <div className="bg-[#071329]/60 backdrop-blur-xl border border-white/10 rounded-3xl shadow-[0_8px_32px_0_rgba(0,0,0,0.8)] p-6 w-full relative overflow-hidden group">
-                    
                     <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-cyan-400 to-transparent opacity-50"></div>
-
                     <div className="flex flex-col items-center mb-5 relative">
                         <div className="w-16 h-16 sm:w-20 sm:h-20 bg-gradient-to-br from-[#0b1c3a] to-blue-900/50 backdrop-blur-md rounded-2xl flex items-center justify-center mb-3 shadow-[0_0_25px_rgba(6,182,212,0.3)] border border-cyan-500/30 p-1 transform rotate-3 transition-transform duration-500 group-hover:rotate-0">
                             {teamLogo ? (
@@ -85,10 +87,8 @@ export default function Login({ onLogin, teamName, teamLogo, players = [] }) {
                                 <span className="text-3xl sm:text-4xl drop-shadow-[0_0_10px_rgba(255,255,255,0.5)]">⚾</span>
                             )}
                         </div>
-                        
                         <h1 className="text-2xl sm:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white via-cyan-100 to-slate-400 tracking-[0.2em] text-center drop-shadow-[0_0_10px_rgba(255,255,255,0.3)]">LOGISTARS</h1>
                         <p className="text-[8px] sm:text-[9px] text-cyan-300/80 font-bold mt-1 tracking-[0.3em]">ANALYTICS SYSTEM</p>
-                        
                         {teamName && teamName !== 'チーム未登録' && (
                             <div className="mt-3 px-3 py-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 backdrop-blur-md flex items-center gap-1.5 shadow-[0_0_15px_rgba(16,185,129,0.1)]">
                                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></div>
@@ -134,7 +134,6 @@ export default function Login({ onLogin, teamName, teamLogo, players = [] }) {
                         >
                             <div className="absolute inset-0 w-full h-full bg-gradient-to-b from-transparent via-transparent to-cyan-600/20 group-hover:to-cyan-500/30 transition-all duration-300"></div>
                             <div className="absolute inset-0 w-full h-full bg-gradient-to-r from-transparent via-cyan-300/30 to-transparent -translate-x-full group-hover:animate-[shine_1.5s_ease-in-out_infinite] skew-x-[-20deg]"></div>
-                            
                             <span className="relative z-10 flex items-center gap-2 text-xs sm:text-sm drop-shadow-md">
                                 {isLoading ? (
                                     <span className="animate-spin inline-block w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full"></span>
@@ -150,17 +149,10 @@ export default function Login({ onLogin, teamName, teamLogo, players = [] }) {
                     </div>
                 </div>
             </div>
-            
             <div className="absolute bottom-3 w-full text-center text-[7px] sm:text-[8px] text-slate-500/50 font-bold z-10 tracking-[0.2em]">
                 &copy; 2026 LOGISTARS. ALL RIGHTS RESERVED.
             </div>
-
-            <style jsx>{`
-                @keyframes shine {
-                    0% { left: -100%; }
-                    100% { left: 200%; }
-                }
-            `}</style>
+            <style jsx>{`@keyframes shine { 0% { left: -100%; } 100% { left: 200%; } }`}</style>
         </div>
     );
 }

@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import Swal from 'sweetalert2';
 
+const API_BASE = 'https://logistars-backend.onrender.com/api';
+
 // ★修正：propsに loggedInPlayerId を追加しました
 export default function MobileInput({ game, players, teamName, historyLogs, setHistoryLogs, pitchingResults = [], onBack, loggedInPlayerId }) {
     const [entryMode, setEntryMode] = useState('pitching');
@@ -109,7 +111,7 @@ export default function MobileInput({ game, players, teamName, historyLogs, setH
     }, [pitchingResults, targetPlayerId, entryMode, players]);
 
     const restoreLatestState = (logs) => {
-        const targetLogs = logs.filter(l => l.playerId === targetPlayerId && l.type === entryMode);
+        const targetLogs = logs.filter(l => l.playerId === targetPlayerId && l.type === entryMode && String(l.game) === String(game.id));
         if (targetLogs.length > 0) {
             const latest = targetLogs[0];
             if (latest.nextState) {
@@ -160,7 +162,8 @@ export default function MobileInput({ game, players, teamName, historyLogs, setH
         return currentRunner;
     };
 
-    const handleSave = (e) => {
+    // ★ データベース（Render）へ打撃・投球記録を直接保存・更新する
+    const handleSave = async (e) => {
         if (e && e.preventDefault) e.preventDefault();
         if (!targetPlayerId) { Swal.fire({ title: 'エラー', text: '対象選手を選択してください。', icon: 'warning', confirmButtonColor: '#d33' }); return; }
 
@@ -198,61 +201,121 @@ export default function MobileInput({ game, players, teamName, historyLogs, setH
         }
 
         const calculatedNextState = { balls: String(nextB), strikes: String(nextS), outs: `${nextO}アウト`, runnerState: nextR, inning: nextI, half: nextH, currentBatterName: nextBatter, atBatNumber: nextAtBat };
-        const newLog = {
-            id: editingLogId || Date.now(), gameId: game.id, game: game.id, playerId: targetPlayerId, type: entryMode,
-            atBat: entryMode === 'batting' ? `${inning}回${half} ${atBatNumber}` : `${inning}回${half} vs ${currentBatterName||'不明'}`,
-            situation: `${outs} ${runnerState} ${balls}-${strikes} ${pitchName}`,
-            result: `${finalResName} ${dirName ? `(${dirName})` : ''}`, shortResult: finalResName, date: new Date().toLocaleDateString('ja-JP'),
-            rawData: { outs, runnerState, balls, strikes, atBatNumber, batPitchType, batCustomPitch, batCourse, batResult, batCustomResult, batDirection, batRemarks, inning, half, currentBatterName, pitchType, pitchCustomPitch, pitchSpeed, pitchCourse, pitchResult, pitchCustomResult, pitchDirection, pitchRemarks },
-            nextState: calculatedNextState 
-        };
+        const rawPayload = { outs, runnerState, balls, strikes, atBatNumber, batPitchType, batCustomPitch, batCourse, batResult, batCustomResult, batDirection, batRemarks, inning, half, currentBatterName, pitchType, pitchCustomPitch, pitchSpeed, pitchCourse, pitchResult, pitchCustomResult, pitchDirection, pitchRemarks, nextState: calculatedNextState };
 
         const Toast = Swal.mixin({
             toast: true, position: 'top-end', showConfirmButton: false, timer: 1500, timerProgressBar: true,
         });
 
-        if (editingLogId) {
-            setHistoryLogs(prev => prev.map(l => l.id === editingLogId ? newLog : l));
-            Toast.fire({ icon: 'success', title: '履歴を更新しました' });
-            setEditingLogId(null); handleClear();
-        } else {
-            setHistoryLogs(prev => [newLog, ...prev]);
-            Toast.fire({ icon: 'success', title: '記録が追加されました' });
-            setBalls(calculatedNextState.balls); setStrikes(calculatedNextState.strikes); setOuts(calculatedNextState.outs); setRunnerState(calculatedNextState.runnerState);
-            if (entryMode === 'pitching') { setInning(calculatedNextState.inning); setHalf(calculatedNextState.half); setCurrentBatterName(calculatedNextState.currentBatterName); } 
-            else { 
-                setAtBatNumber(calculatedNextState.atBatNumber); 
-                setInning(calculatedNextState.inning); 
-                setHalf(calculatedNextState.half); 
+        try {
+            const endpoint = entryMode === 'batting' ? 'at-bats' : 'pitches';
+            const dbPayload = entryMode === 'batting' ? {
+                game: game.id,
+                batter: parseInt(targetPlayerId, 10),
+                inning: `${inning}回${half}`,
+                batting_order: atBatNumber,
+                outs: outs,
+                runner_state: runnerState,
+                balls: parseInt(balls, 10) || 0,
+                strikes: parseInt(strikes, 10) || 0,
+                pitch_type: pitchName,
+                course: batCourse ? String(batCourse) : '',
+                result: finalResName,
+                direction: dirName || '',
+                remarks: batRemarks || '',
+                raw_data: rawPayload
+            } : {
+                game: game.id,
+                pitcher: parseInt(targetPlayerId, 10),
+                inning: `${inning}回${half}`,
+                batter_name: currentBatterName || '',
+                outs: outs,
+                runner_state: runnerState,
+                balls: parseInt(balls, 10) || 0,
+                strikes: parseInt(strikes, 10) || 0,
+                pitch_type: pitchName,
+                course: pitchCourse ? String(pitchCourse) : '',
+                speed: pitchSpeed ? parseInt(pitchSpeed, 10) : null,
+                result: finalResName,
+                direction: dirName || '',
+                remarks: pitchRemarks || '',
+                raw_data: rawPayload
+            };
+
+            const url = editingLogId ? `${API_BASE}/${endpoint}/${editingLogId}/` : `${API_BASE}/${endpoint}/`;
+            const method = editingLogId ? 'PATCH' : 'POST';
+            const res = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(dbPayload)
+            });
+
+            if (!res.ok) throw new Error('DB保存エラー');
+            const savedItem = await res.json();
+
+            const newLog = {
+                id: savedItem.id, gameId: game.id, game: game.id, playerId: targetPlayerId, type: entryMode,
+                atBat: entryMode === 'batting' ? `${inning}回${half} ${atBatNumber}` : `${inning}回${half} vs ${currentBatterName||'不明'}`,
+                situation: `${outs} ${runnerState} ${balls}-${strikes} ${pitchName}`,
+                result: `${finalResName} ${dirName ? `(${dirName})` : ''}`, shortResult: finalResName, date: new Date().toLocaleDateString('ja-JP'),
+                rawData: rawPayload,
+                nextState: calculatedNextState 
+            };
+
+            if (editingLogId) {
+                setHistoryLogs(prev => prev.map(l => l.id === editingLogId ? newLog : l));
+                Toast.fire({ icon: 'success', title: 'データベースの履歴を更新しました' });
+                setEditingLogId(null); handleClear();
+            } else {
+                setHistoryLogs(prev => [newLog, ...prev]);
+                Toast.fire({ icon: 'success', title: 'データベースに記録を保存しました' });
+                setBalls(calculatedNextState.balls); setStrikes(calculatedNextState.strikes); setOuts(calculatedNextState.outs); setRunnerState(calculatedNextState.runnerState);
+                if (entryMode === 'pitching') { setInning(calculatedNextState.inning); setHalf(calculatedNextState.half); setCurrentBatterName(calculatedNextState.currentBatterName); } 
+                else { 
+                    setAtBatNumber(calculatedNextState.atBatNumber); 
+                    setInning(calculatedNextState.inning); 
+                    setHalf(calculatedNextState.half); 
+                }
+                setBatCourse(null); setPitchCourse(null); setPitchSpeed(''); setBatCustomPitch(''); setPitchCustomPitch(''); setBatCustomResult(''); setPitchCustomResult(''); setBatDirection(''); setPitchDirection(''); 
             }
-            setBatCourse(null); setPitchCourse(null); setPitchSpeed(''); setBatCustomPitch(''); setPitchCustomPitch(''); setBatCustomResult(''); setPitchCustomResult(''); setBatDirection(''); setPitchDirection(''); 
+        } catch (err) {
+            Swal.fire('通信エラー', 'データベースへの保存に失敗しました。', 'error');
         }
     };
 
+    // ★ データベース（Render）から履歴を削除する
     const handleDeleteHistory = (id) => {
-        Swal.fire({ title: '履歴の削除', text: 'この記録を削除してもよろしいですか？', icon: 'warning', showCancelButton: true, confirmButtonColor: '#d33', cancelButtonColor: '#3085d6', confirmButtonText: '削除', cancelButtonText: 'キャンセル' }).then((result) => {
+        Swal.fire({ title: '履歴の削除', text: 'この記録をデータベースから削除してもよろしいですか？', icon: 'warning', showCancelButton: true, confirmButtonColor: '#d33', cancelButtonColor: '#3085d6', confirmButtonText: '削除', cancelButtonText: 'キャンセル' }).then(async (result) => {
             if (result.isConfirmed) {
-                const newLogs = historyLogs.filter(log => log.id !== id);
-                setHistoryLogs(newLogs);
-                if (editingLogId === id) setEditingLogId(null);
-                restoreLatestState(newLogs); 
-                Swal.fire('削除完了', '履歴から削除しました。', 'success');
+                try {
+                    const endpoint = entryMode === 'batting' ? 'at-bats' : 'pitches';
+                    const res = await fetch(`${API_BASE}/${endpoint}/${id}/`, { method: 'DELETE' });
+                    if (res.ok) {
+                        const newLogs = historyLogs.filter(log => log.id !== id);
+                        setHistoryLogs(newLogs);
+                        if (editingLogId === id) setEditingLogId(null);
+                        restoreLatestState(newLogs); 
+                        Swal.fire('削除完了', 'データベースから削除しました。', 'success');
+                    }
+                } catch (e) {
+                    Swal.fire('エラー', '削除に失敗しました', 'error');
+                }
             }
         });
     };
 
     const handleEditHistory = (log) => {
-        setEditingLogId(log.id); const rd = log.rawData;
-        setOuts(rd.outs); setRunnerState(rd.runnerState); setBalls(rd.balls); setStrikes(rd.strikes);
+        setEditingLogId(log.id); const rd = log.rawData || {};
+        setOuts(rd.outs || '0アウト'); setRunnerState(rd.runnerState || 'ランナーなし'); setBalls(rd.balls || '0'); setStrikes(rd.strikes || '0');
         if (rd.inning) setInning(rd.inning);
         if (rd.half) setHalf(rd.half);
 
         if (log.type === 'batting') {
-            setAtBatNumber(rd.atBatNumber); setBatPitchType(rd.batPitchType); setBatCustomPitch(rd.batCustomPitch);
-            setBatCourse(rd.batCourse); setBatResult(rd.batResult); setBatCustomResult(rd.batCustomResult); setBatDirection(rd.batDirection); setBatRemarks(rd.batRemarks);
+            setAtBatNumber(rd.atBatNumber || '1打席目'); setBatPitchType(rd.batPitchType || 'ストレート'); setBatCustomPitch(rd.batCustomPitch || '');
+            setBatCourse(rd.batCourse || null); setBatResult(rd.batResult || '安打'); setBatCustomResult(rd.batCustomResult || ''); setBatDirection(rd.batDirection || ''); setBatRemarks(rd.batRemarks || '');
         } else {
             setCurrentBatterName(rd.currentBatterName || '');
-            setPitchType(rd.pitchType); setPitchCustomPitch(rd.pitchCustomPitch); setPitchSpeed(rd.pitchSpeed); setPitchCourse(rd.pitchCourse); setPitchResult(rd.pitchResult); setPitchCustomResult(rd.pitchCustomResult); setPitchDirection(rd.pitchDirection); setPitchRemarks(rd.pitchRemarks);
+            setPitchType(rd.pitchType || 'ストレート'); setPitchCustomPitch(rd.pitchCustomPitch || ''); setPitchSpeed(rd.pitchSpeed || ''); setPitchCourse(rd.pitchCourse || null); setPitchResult(rd.pitchResult || 'ボール'); setPitchCustomResult(rd.pitchCustomResult || ''); setPitchDirection(rd.pitchDirection || ''); setPitchRemarks(rd.pitchRemarks || '');
         }
     };
 
@@ -317,7 +380,6 @@ export default function MobileInput({ game, players, teamName, historyLogs, setH
     const hasRunner2 = ['ランナー2塁', 'ランナー1・2塁', 'ランナー2・3塁', '満塁'].includes(runnerState);
     const hasRunner3 = ['ランナー3塁', 'ランナー1・3塁', 'ランナー2・3塁', '満塁'].includes(runnerState);
 
-    // 履歴アイテムを共通で描画する関数
     const renderLogItem = (log) => (
         <div key={log.id} className={`border rounded-lg p-2 text-[10px] flex justify-between items-center shadow-sm bg-white transition-colors ${editingLogId === log.id ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200' : 'border-slate-200 hover:border-slate-300'}`}>
             <div className="flex-1 min-w-0 pr-2">
@@ -335,6 +397,7 @@ export default function MobileInput({ game, players, teamName, historyLogs, setH
             </div>
         </div>
     );
+
     const renderPitchingForm = () => (
         <div className="flex flex-col h-full bg-slate-100 overflow-hidden w-full relative">
             <div className="bg-white px-2 lg:px-4 py-2 flex flex-wrap justify-between items-center shadow-sm z-10 border-b border-slate-200 shrink-0 gap-y-2">
@@ -342,7 +405,6 @@ export default function MobileInput({ game, players, teamName, historyLogs, setH
                     <span className="text-[10px] lg:text-xs font-bold text-slate-500 whitespace-nowrap">現在の投手</span>
                     <select value={targetPlayerId} onChange={(e) => {setTargetPlayerId(e.target.value); setEditingLogId(null);}} className="border border-blue-300 rounded px-2 py-1.5 lg:px-3 text-xs lg:text-sm font-bold text-blue-700 outline-none focus:border-blue-500 max-w-[140px] sm:max-w-[200px] bg-blue-50/50 shadow-sm cursor-pointer">
                         <option value="">-- 選択 --</option>
-                        {/* ★ ここで pitcherPlayers (退団者除外リスト) を使用 */}
                         {pitcherPlayers.map(p => <option key={p.id} value={p.id}>#{p.number} {p.name}</option>)}
                     </select>
                 </div>
@@ -365,13 +427,9 @@ export default function MobileInput({ game, players, teamName, historyLogs, setH
                 </div>
             </div>
 
-            {/* ★修正：iPadで左右に並ぶ構造。スマホでは縦並び */}
             <div className={`flex flex-col lg:flex-row flex-1 overflow-hidden w-full ${!targetPlayerId ? 'opacity-40 pointer-events-none' : ''}`}>
-                
-                {/* ★修正：h-fullとlg:overflow-hiddenを外し、中身の高さに応じて自然に全体がスクロールするようにしました */}
                 <div className="flex-1 overflow-y-auto p-2 lg:p-4 flex flex-col bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-slate-50 items-center">
                     <div className="w-full max-w-[1200px] flex flex-col gap-3 lg:gap-4">
-                        
                         <div className="bg-white p-2 sm:p-3 lg:p-5 rounded-xl lg:rounded-2xl shadow-sm border border-slate-200 flex flex-wrap justify-between items-center shrink-0 gap-y-3">
                             <div className="flex flex-col w-1/3 sm:w-[25%] lg:w-[20%]">
                                 <span className="text-[9px] text-slate-500 font-bold mb-1 ml-1">現在の打者</span>
@@ -406,21 +464,17 @@ export default function MobileInput({ game, players, teamName, historyLogs, setH
                             </div>
                         </div>
 
-                        {/* ★修正：overflow-hiddenとmin-h-0を外しました。これで途中で切れません */}
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 lg:gap-4 w-full">
-                            {/* 左：球種とコース */}
                             <div className="bg-white rounded-xl lg:rounded-2xl shadow-sm border border-slate-200 flex flex-col">
                                 <div className="p-3 border-b border-slate-100 shrink-0">
                                     <h3 className="font-black text-[#0b1c3a] text-xs lg:text-sm mb-2"><span className="bg-[#0b1c3a] text-white rounded-full w-4 h-4 lg:w-5 lg:h-5 inline-flex items-center justify-center text-[10px] lg:text-xs mr-1">1</span> 球種</h3>
                                     <ButtonGrid items={pitchTypes} selected={pitchType} onSelect={setPitchType} minW="55px" />
                                     {pitchType === 'その他' && <input type="text" placeholder="球種名を入力..." value={pitchCustomPitch} onChange={e=>setPitchCustomPitch(e.target.value)} className="mt-2 w-full border border-slate-300 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-[#0b1c3a] bg-blue-50/50" />}
                                 </div>
-                                
                                 <div className="p-3 lg:p-4 flex flex-col bg-slate-50 relative">
                                     <h3 className="font-black text-[#0b1c3a] text-xs lg:text-sm mb-2 shrink-0"><span className="bg-[#0b1c3a] text-white rounded-full w-4 h-4 lg:w-5 lg:h-5 inline-flex items-center justify-center text-[10px] lg:text-xs mr-1">2</span> コースと球速 <span className="text-[9px] font-normal text-slate-400 ml-1">(見逃し・空振り時も入力)</span></h3>
                                     <div className="flex-1 flex flex-col lg:flex-row justify-center items-center gap-3 lg:gap-8 w-full shrink-0 py-2">
                                         <StrikeZone selectedCourse={pitchCourse} onSelectCourse={setPitchCourse} />
-                                        
                                         <div className="flex flex-row lg:flex-col items-center justify-center gap-3 lg:gap-2 bg-white px-3 lg:px-6 py-3 lg:py-8 rounded-xl border border-slate-200 shadow-sm w-full lg:w-auto lg:min-w-[160px]">
                                             <span className="text-[10px] lg:text-xs font-bold text-slate-500 lg:mb-2">球速</span>
                                             <div className="flex items-end border-b-2 lg:border-b-4 border-[#0b1c3a] pb-1 w-20 lg:w-32 justify-center">
@@ -433,9 +487,7 @@ export default function MobileInput({ game, players, teamName, historyLogs, setH
                                 </div>
                             </div>
 
-                            {/* 右：結果と備考 */}
                             <div className="bg-white rounded-xl lg:rounded-2xl shadow-sm border border-slate-200 flex flex-col">
-                                {/* ★修正：右側のカードの中身も overflow-hidden や -y-auto を外しました */}
                                 <div className="p-3 lg:p-4 flex flex-col gap-4">
                                     <div>
                                         <h3 className="font-black text-[#0b1c3a] text-xs lg:text-sm mb-2"><span className="bg-[#0b1c3a] text-white rounded-full w-4 h-4 lg:w-5 lg:h-5 inline-flex items-center justify-center text-[10px] lg:text-xs mr-1">3</span> 投球結果</h3>
@@ -450,8 +502,6 @@ export default function MobileInput({ game, players, teamName, historyLogs, setH
                                         <input type="text" value={pitchRemarks} onChange={e=>setPitchRemarks(e.target.value)} placeholder="特記事項（例：ワンバウンド 等）" className="w-full border-2 border-slate-200 rounded-lg px-3 py-2 lg:py-3 text-xs outline-none focus:border-[#0b1c3a] bg-slate-50" />
                                     </div>
                                 </div>
-                                
-                                {/* ★iPad用：保存ボタン (スマホでは隠す) */}
                                 <div className="hidden lg:flex p-3 lg:p-4 border-t border-slate-100 bg-slate-50 gap-2 justify-end mt-auto shrink-0 rounded-b-xl lg:rounded-b-2xl">
                                     {!editingLogId && <button onClick={handleClear} className="bg-white border border-slate-300 text-slate-600 px-4 lg:px-5 py-2 rounded-lg text-xs font-bold hover:bg-slate-100 shadow-sm whitespace-nowrap">クリア</button>}
                                     <button onClick={handleSave} className={`${editingLogId ? 'bg-blue-600 hover:bg-blue-700' : 'bg-[#0c4a34] hover:bg-[#083324]'} text-white px-6 lg:px-8 py-2.5 lg:py-3 rounded-lg text-sm lg:text-base font-black shadow-md transition-transform transform active:scale-95 flex items-center justify-center gap-1.5 whitespace-nowrap`}>
@@ -461,11 +511,9 @@ export default function MobileInput({ game, players, teamName, historyLogs, setH
                             </div>
                         </div>
                     </div>
-                    {/* ★スマホ用：一番下までスクロールした時に、固定ボタンに隠れないための透明なつっかえ棒（余白） */}
                     <div className="h-40 w-full lg:hidden shrink-0"></div>
                 </div>
 
-                {/* ★iPad/PC用：右側の履歴パネル (スマホでは隠す) */}
                 <div className="hidden lg:flex w-[260px] xl:w-[280px] bg-white border-l border-slate-300 flex-col shrink-0 z-20 shadow-[-4px_0_15px_rgba(0,0,0,0.05)] h-full">
                     <div className="p-3 lg:p-4 border-b border-slate-200 bg-slate-50 shrink-0 flex justify-between items-center">
                         <h4 className="text-xs lg:text-sm font-bold text-[#0b1c3a] border-l-4 border-[#0b1c3a] pl-2">{selectedPlayerName ? `${selectedPlayerName}の投球履歴` : '投球履歴'} ({displayLogs.length}件)</h4>
@@ -500,11 +548,9 @@ export default function MobileInput({ game, players, teamName, historyLogs, setH
                     <span className="text-[10px] lg:text-xs font-bold text-slate-500 whitespace-nowrap">現在の打者</span>
                     <select value={targetPlayerId} onChange={(e) => {setTargetPlayerId(e.target.value); setEditingLogId(null);}} className="border border-blue-300 rounded px-2 py-1.5 lg:px-3 text-xs lg:text-sm font-bold text-blue-700 outline-none focus:border-blue-500 max-w-[130px] sm:max-w-[200px] bg-white shadow-sm cursor-pointer">
                         <option value="">-- 選択 --</option>
-                        {/* ★ ここで activePlayers (退団者除外リスト) を使用 */}
                         {activePlayers.map(p => <option key={p.id} value={p.id}>#{p.number} {p.name}</option>)}
                     </select>
                 </div>
-                
                 <div className="flex items-center gap-1 pr-1">
                     <span className="text-[10px] text-slate-400 font-bold mr-1 hidden sm:inline">イニング</span>
                     <select value={inning} onChange={e=>setInning(e.target.value)} className="font-black text-[#0b1c3a] text-lg sm:text-xl bg-transparent outline-none appearance-none cursor-pointer">
@@ -516,13 +562,9 @@ export default function MobileInput({ game, players, teamName, historyLogs, setH
                 </div>
             </div>
 
-            {/* ★修正：iPadで左右に並ぶよう構造を修正 */}
             <div className={`flex flex-col lg:flex-row flex-1 overflow-hidden w-full ${!targetPlayerId ? 'opacity-40 pointer-events-none' : ''}`}>
-                
-                {/* ★修正：h-fullとlg:overflow-hiddenを外し、縦幅が足りない時は画面全体でスクロールできるようにしました */}
                 <div className="flex-1 overflow-y-auto p-2 lg:p-4 flex flex-col bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-slate-50 items-center">
                     <div className="w-full max-w-[1000px] flex flex-col gap-3 lg:gap-4">
-                        
                         <div className="bg-white p-2 sm:p-3 lg:p-4 w-full rounded-xl shadow-sm border border-slate-200 flex flex-wrap justify-between items-center shrink-0 mb-3 lg:mb-4 gap-y-3">
                             <div className="flex w-full sm:w-auto justify-between sm:justify-start gap-4 sm:gap-8 items-center border-b sm:border-b-0 border-slate-100 pb-2 sm:pb-0">
                                 <div className="flex flex-col w-[30%] sm:w-[120px]">
@@ -560,10 +602,7 @@ export default function MobileInput({ game, players, teamName, historyLogs, setH
                             </div>
                         </div>
 
-                        {/* ★修正：overflow-hiddenとmin-h-0を外しました。 */}
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 w-full">
-                            
-                            {/* 左：球種とコース */}
                             <div className="bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col">
                                 <div className="p-2 sm:p-3 border-b border-slate-100 shrink-0">
                                     <h3 className="font-black text-[#0b1c3a] text-xs lg:text-sm mb-2"><span className="bg-[#0b1c3a] text-white rounded-full w-4 h-4 lg:w-5 lg:h-5 inline-flex items-center justify-center text-[10px] lg:text-xs mr-1">1</span> 球種 <span className="text-[9px] font-normal text-slate-400 ml-1">(投手が投げた球)</span></h3>
@@ -572,8 +611,6 @@ export default function MobileInput({ game, players, teamName, historyLogs, setH
                                         <input type="text" value={batCustomPitch} onChange={e => setBatCustomPitch(e.target.value)} placeholder="球種名を入力..." className="mt-2 w-full border border-slate-300 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-[#0b1c3a] bg-blue-50/50"/>
                                     )}
                                 </div>
-
-                                {/* ★修正：コース不明ボタンが見えるように overflow-y-auto を追加 */}
                                 <div className="p-2 sm:p-3 flex-1 flex flex-col bg-slate-50 relative overflow-y-auto hide-scrollbar min-h-[250px]">
                                     <h3 className="font-black text-[#0b1c3a] text-xs lg:text-sm mb-2 shrink-0"><span className="bg-[#0b1c3a] text-white rounded-full w-4 h-4 lg:w-5 lg:h-5 inline-flex items-center justify-center text-[10px] lg:text-xs mr-1">2</span> コース <span className="text-[10px] font-normal text-slate-400 ml-1">(見逃し・空振り時も入力)</span></h3>
                                     <div className="flex-1 flex items-center justify-center bg-white p-2 rounded-xl border border-slate-200 shadow-sm shrink-0 py-2">
@@ -582,9 +619,7 @@ export default function MobileInput({ game, players, teamName, historyLogs, setH
                                 </div>
                             </div>
 
-                            {/* 右：結果と備考 */}
                             <div className="bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col">
-                                {/* ★修正：overflow-y-auto を外して、カードが自然に下まで伸びるようにしました */}
                                 <div className="p-2 sm:p-3 flex flex-col gap-3">
                                     <div>
                                         <h3 className="font-black text-[#0b1c3a] text-xs lg:text-sm mb-2"><span className="bg-[#0b1c3a] text-white rounded-full w-4 h-4 lg:w-5 lg:h-5 inline-flex items-center justify-center text-[10px] lg:text-xs mr-1">3</span> 打撃結果</h3>
@@ -599,8 +634,6 @@ export default function MobileInput({ game, players, teamName, historyLogs, setH
                                         <input type="text" value={batRemarks} onChange={e=>setBatRemarks(e.target.value)} placeholder="特記事項（例：詰まった等）" className="w-full border-2 border-slate-200 rounded-lg px-3 py-2 sm:py-3 text-sm outline-none focus:border-[#0b1c3a] bg-slate-50 transition-colors" />
                                     </div>
                                 </div>
-                                
-                                {/* ★iPad用：保存ボタン (スマホでは隠す) */}
                                 <div className="hidden lg:flex p-2 sm:p-3 border-t border-slate-100 bg-slate-50 gap-2 justify-end mt-auto shrink-0 rounded-b-xl">
                                     {!editingLogId && <button onClick={handleClear} className="bg-white border border-slate-300 text-slate-600 px-4 sm:px-5 py-2 rounded-lg text-xs font-bold hover:bg-slate-100 shadow-sm whitespace-nowrap">クリア</button>}
                                     <button onClick={handleSave} className={`${editingLogId ? 'bg-blue-600 hover:bg-blue-700' : 'bg-[#0c4a34] hover:bg-[#083324]'} text-white px-6 sm:px-8 py-2.5 sm:py-3 rounded-lg text-sm font-black shadow-md transition-transform transform active:scale-95 flex items-center justify-center gap-1.5 whitespace-nowrap`}>
@@ -608,14 +641,11 @@ export default function MobileInput({ game, players, teamName, historyLogs, setH
                                     </button>
                                 </div>
                             </div>
-                            
                         </div>
                     </div>
-                    {/* ★スマホ用：一番下までスクロールした時に、固定ボタンに隠れないための透明なつっかえ棒（余白） */}
                     <div className="h-40 w-full lg:hidden shrink-0"></div>
                 </div>
 
-                {/* ★iPad/PC用：右側の履歴パネル (スマホでは隠す) */}
                 <div className="hidden lg:flex w-[260px] xl:w-[280px] bg-white border-l border-slate-300 flex-col shrink-0 z-20 shadow-[-4px_0_15px_rgba(0,0,0,0.05)] h-full">
                     <div className="p-3 lg:p-4 border-b border-slate-200 bg-slate-50 shrink-0 flex justify-between items-center">
                         <h4 className="text-xs lg:text-sm font-bold text-[#0b1c3a] border-l-4 border-[#0b1c3a] pl-2">{selectedPlayerName ? `${selectedPlayerName}の履歴` : '履歴'} ({displayLogs.length}件)</h4>
@@ -645,7 +675,6 @@ export default function MobileInput({ game, players, teamName, historyLogs, setH
 
     return (
         <div className="fixed inset-0 bg-white z-[100] flex flex-col w-full h-[100dvh] overflow-hidden animate-fade-in font-sans">
-            {/* 全体共通ヘッダー */}
             <div className="bg-[#0b1c3a] text-white px-2 sm:px-4 py-2 flex flex-wrap justify-between items-center shadow-md z-20 shrink-0 min-h-[50px] border-b border-blue-900 gap-y-2">
                 <div className="flex items-center gap-2 sm:gap-4 lg:gap-8">
                     <span className="font-bold italic text-base lg:text-xl tracking-widest hidden sm:inline">LOGISTARS</span>
@@ -670,7 +699,6 @@ export default function MobileInput({ game, players, teamName, historyLogs, setH
                 {entryMode === 'batting' ? renderBattingForm() : renderPitchingForm()}
             </div>
 
-            {/* 選手未選択時のオーバーレイ */}
             {!targetPlayerId && (
                 <div className="absolute inset-0 top-[60px] z-50 flex items-center justify-center bg-slate-900/30 backdrop-blur-sm animate-fade-in">
                     <div className="bg-white text-[#0b1c3a] px-6 sm:px-8 py-5 sm:py-6 lg:px-10 lg:py-8 rounded-2xl shadow-2xl flex flex-col items-center gap-3 sm:gap-4 border-2 border-blue-500 transform scale-105 mx-4 text-center">
@@ -681,7 +709,6 @@ export default function MobileInput({ game, players, teamName, historyLogs, setH
                 </div>
             )}
 
-            {/* ★スマホ用：画面下部のアコーディオン＆保存ボタン (iPad/PCでは非表示) */}
             {targetPlayerId && (
                 <div className="lg:hidden fixed bottom-0 left-0 w-full bg-white rounded-t-3xl shadow-[0_-10px_20px_rgba(0,0,0,0.15)] border-t border-slate-200 z-[150] flex flex-col transition-all duration-300">
                     <div className="flex flex-col bg-slate-50 rounded-t-3xl overflow-hidden">

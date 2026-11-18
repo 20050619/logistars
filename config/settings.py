@@ -76,11 +76,13 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 
 # Database
-# ★修正: Renderにいる時はRenderのDBを、手元の時はsqlite3を自動で使い分ける
+# ★修正: Renderに永続ディスク(/opt/render/project/src/data)がある場合はそこへ保存する
+DATA_DIR = Path('/opt/render/project/src/data') if os.path.exists('/opt/render/project/src/data') else BASE_DIR
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'NAME': DATA_DIR / 'db.sqlite3',
     }
 }
 if 'DATABASE_URL' in os.environ:

@@ -1,6 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import Swal from 'sweetalert2';
 
+const API_BASE = 'https://logistars-backend.onrender.com/api';
+
 const CATEGORIES = [
     {
         id: 1, title: 'スピード・アジリティ',
@@ -63,7 +65,6 @@ export default function PhysicalData({ players = [], userRole = 'admin', linkedP
     const roleStr = String(userRole || '').trim().toLowerCase();
     const isPlayerRole = roleStr === 'player' || roleStr === '一般選手' || roleStr === '選手';
 
-    // ★ 新機能：3つの表示モード（現役のみ / 含む / 退団者のみ）
     const [playersMode, setPlayersMode] = useState('active_only');
     const [sortConfig, setSortConfig] = useState({ key: 'number', direction: 'asc' });
 
@@ -95,7 +96,6 @@ export default function PhysicalData({ players = [], userRole = 'admin', linkedP
         }
     };
 
-    // ★ 最強の現役チェック機能
     const getTodayStr = () => {
         const d = new Date();
         const y = d.getFullYear();
@@ -114,7 +114,6 @@ export default function PhysicalData({ players = [], userRole = 'admin', linkedP
         return true;
     };
 
-    // ★ 表示モードに従って選手を含めるか判定
     const shouldIncludePlayer = (playerIdStr) => {
         const active = checkIsActive(playerIdStr);
         if (playersMode === 'active_only') return active;
@@ -140,15 +139,12 @@ export default function PhysicalData({ players = [], userRole = 'admin', linkedP
         return (w / (heightM * heightM)).toFixed(1);
     };
 
-    // ★ 表示用プレイヤーリスト
     const displayPlayers = useMemo(() => {
         return players
             .filter(p => shouldIncludePlayer(p.id))
             .map(p => {
                 const isActive = checkIsActive(p.id);
                 let displayName = p.name || '不明';
-                
-                // 退団者の場合は表示名に「(退団)」を付与する
                 if (!isActive && !displayName.includes('(退団)')) {
                     displayName += ' (退団)';
                 }
@@ -185,7 +181,6 @@ export default function PhysicalData({ players = [], userRole = 'admin', linkedP
     const initialPlayerId = isPlayerRole && linkedPlayerId ? String(linkedPlayerId) : (displayPlayers.length > 0 ? String(displayPlayers[0].id) : '');
     const [selectedPlayerId, setSelectedPlayerId] = useState(initialPlayerId);
     
-    // 最初に画面を開いた時だけ、選手自身のIDに合わせる
     useEffect(() => {
         if (selectedPlayerId && shouldIncludePlayer(selectedPlayerId)) return;
         
@@ -198,13 +193,32 @@ export default function PhysicalData({ players = [], userRole = 'admin', linkedP
         }
     }, [displayPlayers, selectedPlayerId, isPlayerRole, linkedPlayerId, playersMode]);
 
-    const [records, setRecords] = useState(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('logistars_physical_data');
-            if (saved) return JSON.parse(saved);
+    // ★ データベース（Render）から身体能力データを取得する
+    const [records, setRecords] = useState([]);
+
+    const fetchPhysicalRecords = async () => {
+        try {
+            const res = await fetch(`${API_BASE}/physical-records/`);
+            if (res.ok) {
+                const data = await res.json();
+                const formatted = data.map(item => ({
+                    ...(item.measurements || {}),
+                    id: item.id,
+                    playerId: String(item.playerId),
+                    date: item.date,
+                    measurer: item.measurer || '',
+                    memo: item.memo || ''
+                }));
+                setRecords(formatted);
+            }
+        } catch (err) {
+            console.error('身体能力データの取得失敗:', err);
         }
-        return [];
-    });
+    };
+
+    useEffect(() => {
+        fetchPhysicalRecords();
+    }, []);
     
     const [editingRecordId, setEditingRecordId] = useState(null); 
     const [formData, setFormData] = useState({});
@@ -216,12 +230,6 @@ export default function PhysicalData({ players = [], userRole = 'admin', linkedP
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
     const [activeCategory, setActiveCategory] = useState(null);
-
-    useEffect(() => {
-        if (typeof window !== 'undefined') {
-            localStorage.setItem('logistars_physical_data', JSON.stringify(records));
-        }
-    }, [records]);
 
     const getSeasonYear = (dateString) => {
         if (!dateString) return new Date().getFullYear();
@@ -317,36 +325,58 @@ export default function PhysicalData({ players = [], userRole = 'admin', linkedP
         setFormData(prev => ({ ...prev, [key]: value }));
     };
 
-    const handleSave = () => {
-        const newRecord = { 
-            ...formData, 
-            id: editingRecordId || Date.now(), 
-            playerId: String(targetPlayer.id),
+    // ★ データベース（Render）へ身体能力データを保存・更新する
+    const handleSave = async () => {
+        if (!targetPlayer.id) {
+            Swal.fire('エラー', '選手が選択されていません', 'error');
+            return;
+        }
+        const { id, playerId, date, measurer: m, memo: mem, ...cleanMeasurements } = formData;
+        const payload = {
+            playerId: parseInt(targetPlayer.id, 10),
             date: inputDate,
             measurer: measurer,
-            memo: memo
+            memo: memo,
+            measurements: cleanMeasurements
         };
 
-        if (editingRecordId) {
-            setRecords(prev => prev.map(r => r.id === editingRecordId ? newRecord : r));
-            Swal.fire({ title: '更新完了', text: '身体能力データを更新しました。', icon: 'success', timer: 1500, showConfirmButton: false });
-        } else {
-            setRecords(prev => [newRecord, ...prev]);
-            Swal.fire({ title: '保存完了', text: '身体能力データを保存しました。', icon: 'success', timer: 1500, showConfirmButton: false });
+        try {
+            const url = editingRecordId ? `${API_BASE}/physical-records/${editingRecordId}/` : `${API_BASE}/physical-records/`;
+            const method = editingRecordId ? 'PATCH' : 'POST';
+            const res = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (res.ok) {
+                await fetchPhysicalRecords();
+                Swal.fire({ title: editingRecordId ? '更新完了' : '保存完了', text: '身体能力データをデータベースに保存しました。', icon: 'success', timer: 1500, showConfirmButton: false });
+                setViewMode('dashboard');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            } else {
+                Swal.fire('エラー', '保存に失敗しました', 'error');
+            }
+        } catch (err) {
+            Swal.fire('通信エラー', 'サーバーに接続できません', 'error');
         }
-        
-        setViewMode('dashboard');
-        window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
+    // ★ データベース（Render）から身体能力データを削除する
     const handleDelete = (id) => {
         Swal.fire({
-            title: '記録の削除', text: 'この測定記録を削除しますか？', icon: 'warning',
+            title: '記録の削除', text: 'この測定記録をデータベースから削除しますか？', icon: 'warning',
             showCancelButton: true, confirmButtonColor: '#d33', cancelButtonColor: '#3085d6', confirmButtonText: '削除'
-        }).then((result) => {
+        }).then(async (result) => {
             if (result.isConfirmed) {
-                setRecords(records.filter(r => r.id !== id));
-                Swal.fire('削除完了', '記録を削除しました。', 'success');
+                try {
+                    const res = await fetch(`${API_BASE}/physical-records/${id}/`, { method: 'DELETE' });
+                    if (res.ok) {
+                        await fetchPhysicalRecords();
+                        Swal.fire('削除完了', '記録を削除しました。', 'success');
+                    }
+                } catch (e) {
+                    Swal.fire('通信エラー', '削除に失敗しました', 'error');
+                }
             }
         });
     };
@@ -637,7 +667,6 @@ export default function PhysicalData({ players = [], userRole = 'admin', linkedP
                         <div className="flex flex-col md:flex-row gap-4 items-center justify-end w-full lg:w-auto">
                             <FilterControls />
                             
-                            {/* ★ 表示対象切り替えドロップダウン */}
                             {!isPlayerRole && (
                                 <div className="flex items-center md:ml-2 border-l border-white/20 pl-4">
                                     <span className="text-[10px] text-cyan-200 mr-2 font-bold whitespace-nowrap">表示対象:</span>

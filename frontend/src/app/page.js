@@ -80,6 +80,8 @@ export default function Home() {
   const [passwordForm, setPasswordForm] = useState({ current: '', new: '', confirm: '' });
   
   const [mustChangePassword, setMustChangePassword] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState(null);
+  const [includeRetiredStats, setIncludeRetiredStats] = useState(false);
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -98,7 +100,6 @@ export default function Home() {
       });
   };
 
-  // ★復刻：通信失敗時にデモデータ（山田太郎など）を表示する
   const fetchPlayers = () => fetch('https://logistars-backend.onrender.com/api/players/')
     .then(res => {
         if (!res.ok) throw new Error('API Error');
@@ -146,10 +147,45 @@ export default function Home() {
           if (resPit.ok) setAllPitchingResults(await resPit.json());
 
           const resAb = await fetch('https://logistars-backend.onrender.com/api/at-bats/');
-          if (resAb.ok) setAtBatRecords(await resAb.json());
+          let abData = [];
+          if (resAb.ok) {
+              abData = await resAb.json();
+              setAtBatRecords(abData);
+          }
 
           const resPitch = await fetch('https://logistars-backend.onrender.com/api/pitches/');
-          if (resPitch.ok) setPitchRecords(await resPitch.json());
+          let pitchData = [];
+          if (resPitch.ok) {
+              pitchData = await resPitch.json();
+              setPitchRecords(pitchData);
+          }
+
+          // ★DBから取得した打撃・投球記録をスマホ入力の履歴形式にも変換して全端末同期
+          const syncedLogs = [
+              ...abData.map(ab => ({
+                  id: ab.id, gameId: ab.game, game: ab.game, playerId: String(ab.batter), type: 'batting',
+                  atBat: `${ab.inning || ''} ${ab.batting_order || ''}`.trim(),
+                  situation: `${ab.outs || ''} ${ab.runner_state || ''} ${ab.balls}-${ab.strikes} ${ab.pitch_type || ''}`.trim(),
+                  result: `${ab.result} ${ab.direction ? `(${ab.direction})` : ''}`.trim(),
+                  shortResult: ab.result,
+                  date: ab.created_at ? new Date(ab.created_at).toLocaleDateString('ja-JP') : '',
+                  rawData: ab.raw_data || {},
+                  nextState: ab.raw_data?.nextState || null
+              })),
+              ...pitchData.map(p => ({
+                  id: p.id, gameId: p.game, game: p.game, playerId: String(p.pitcher), type: 'pitching',
+                  atBat: `${p.inning || ''} vs ${p.batter_name || '不明'}`.trim(),
+                  situation: `${p.outs || ''} ${p.runner_state || ''} ${p.balls}-${p.strikes} ${p.pitch_type || ''}`.trim(),
+                  result: `${p.result} ${p.direction ? `(${p.direction})` : ''}`.trim(),
+                  shortResult: p.result,
+                  date: p.created_at ? new Date(p.created_at).toLocaleDateString('ja-JP') : '',
+                  rawData: p.raw_data || {},
+                  nextState: p.raw_data?.nextState || null
+              }))
+          ].sort((a, b) => b.id - a.id);
+
+          setMobileHistoryLogs(syncedLogs);
+          setIsLogsLoaded(true);
 
       } catch (err) { 
           console.warn("分析データの取得に失敗しました (デモ環境)"); 
@@ -157,51 +193,46 @@ export default function Home() {
   };
 
   useEffect(() => {
-    const savedLogo = localStorage.getItem('logistars_team_logo');
-    if (savedLogo) setTeamLogo(savedLogo);
-    const savedName = localStorage.getItem('logistars_team_name');
-    
-    setSeasonStartMonth(localStorage.getItem('logistars_season_start_month') || '4');
-    setSeasonStartDay(localStorage.getItem('logistars_season_start_day') || '1');
-    setSeasonEndMonth(localStorage.getItem('logistars_season_end_month') || '3');
-    setSeasonEndDay(localStorage.getItem('logistars_season_end_day') || '31');
-
     fetch('https://logistars-backend.onrender.com/api/teams/')
       .then(res => res.ok ? res.json() : Promise.reject())
       .then(data => {
         if (data.length > 0) { 
-            setTeamName(savedName || data[0].name); 
-            setSettingTeamName(savedName || data[0].name);
-            setTeamId(data[0].id); 
+            const t = data[0];
+            setTeamName(t.name); 
+            setSettingTeamName(t.name);
+            setTeamLogo(t.logo || null);
+            setSeasonStartMonth(String(t.season_start_month || 4));
+            setSeasonStartDay(String(t.season_start_day || 1));
+            setSeasonEndMonth(String(t.season_end_month || 3));
+            setSeasonEndDay(String(t.season_end_day || 31));
+            setIncludeRetiredStats(Boolean(t.include_retired_stats));
+            
+            localStorage.setItem('logistars_team_name', t.name);
+            if (t.logo) localStorage.setItem('logistars_team_logo', t.logo);
+            else localStorage.removeItem('logistars_team_logo');
+            localStorage.setItem('logistars_season_start_month', String(t.season_start_month || 4));
+            localStorage.setItem('logistars_season_start_day', String(t.season_start_day || 1));
+            localStorage.setItem('logistars_season_end_month', String(t.season_end_month || 3));
+            localStorage.setItem('logistars_season_end_day', String(t.season_end_day || 31));
+            localStorage.setItem('logistars_include_retired_stats', t.include_retired_stats ? 'true' : 'false');
+
+            setTeamId(t.id); 
             setDbStatus('connected'); 
         } else { 
-            setTeamName(savedName || 'チーム未登録'); 
-            setSettingTeamName(savedName || 'チーム未登録');
+            setTeamName('チーム未登録'); 
+            setSettingTeamName('チーム未登録');
             setDbStatus('connected'); 
         }
       }).catch(() => { 
-          // ★復刻：デモ環境の場合はチーム名を変更し、ステータスをエラー（デモモード）にする
-          setTeamName(savedName || 'LOGISTARS (デモ環境)'); 
-          setSettingTeamName(savedName || 'LOGISTARS (デモ環境)');
+          setTeamName('LOGISTARS (デモ環境)'); 
+          setSettingTeamName('LOGISTARS (デモ環境)');
           setDbStatus('error'); 
       });
       
     fetchPlayers();
     fetchGames();
     fetchAllResults(); 
-
-    const savedLogs = localStorage.getItem('logistars_mobile_logs');
-    if (savedLogs) {
-        try { setMobileHistoryLogs(JSON.parse(savedLogs)); } catch (e) { console.error("履歴の復元に失敗", e); }
-    }
-    setIsLogsLoaded(true);
   }, []);
-
-  useEffect(() => {
-      if (isLogsLoaded) {
-          localStorage.setItem('logistars_mobile_logs', JSON.stringify(mobileHistoryLogs));
-      }
-  }, [mobileHistoryLogs, isLogsLoaded]);
 
   const activePlayersData = useMemo(() => {
       if (userRole === 'player') {
@@ -266,10 +297,9 @@ export default function Home() {
       };
 
       atBatRecords.filter(ab => String(ab.game) === String(selectedGame.id)).forEach(processMobile);
-      mobileHistoryLogs.filter(log => log.type === 'batting' && String(log.game) === String(selectedGame.id)).forEach(processMobile);
 
       return Object.values(agg);
-  }, [selectedGame, gameBattingResults, atBatRecords, mobileHistoryLogs, activePlayersData]);
+  }, [selectedGame, gameBattingResults, atBatRecords, activePlayersData]);
 
   const handleLogoChange = (e) => {
       const file = e.target.files[0];
@@ -280,43 +310,50 @@ export default function Home() {
       }
   };
 
-const handleSaveTeamInfo = async () => {
-    setIsSavingTeam(true);
-    if (teamLogo) localStorage.setItem('logistars_team_logo', teamLogo);
-    else localStorage.removeItem('logistars_team_logo');
-    
-    localStorage.setItem('logistars_team_name', settingTeamName);
-    localStorage.setItem('logistars_season_start_month', seasonStartMonth);
-    localStorage.setItem('logistars_season_start_day', seasonStartDay);
-    localStorage.setItem('logistars_season_end_month', seasonEndMonth);
-    localStorage.setItem('logistars_season_end_day', seasonEndDay);
+  const handleSaveTeamInfo = async () => {
+      setIsSavingTeam(true);
+      if (teamLogo) localStorage.setItem('logistars_team_logo', teamLogo);
+      else localStorage.removeItem('logistars_team_logo');
+      
+      localStorage.setItem('logistars_team_name', settingTeamName);
+      localStorage.setItem('logistars_season_start_month', seasonStartMonth);
+      localStorage.setItem('logistars_season_start_day', seasonStartDay);
+      localStorage.setItem('logistars_season_end_month', seasonEndMonth);
+      localStorage.setItem('logistars_season_end_day', seasonEndDay);
 
-    // ★データベース(Render)のチーム名も更新する処理を追加
-    if (teamId) {
-        try {
-            await fetch(`https://logistars-backend.onrender.com/api/teams/${teamId}/`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: settingTeamName })
-            });
-        } catch (e) {
-            console.error("DBのチーム名更新に失敗:", e);
-        }
-    }
-    
-    setTeamName(settingTeamName);
-    setIsSavingTeam(false);
-    Swal.fire('保存完了', 'チーム情報をデータベースに更新しました。', 'success');
-};
+      if (teamId) {
+          try {
+              const res = await fetch(`https://logistars-backend.onrender.com/api/teams/${teamId}/`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                      name: settingTeamName,
+                      logo: teamLogo || null,
+                      season_start_month: parseInt(seasonStartMonth, 10),
+                      season_start_day: parseInt(seasonStartDay, 10),
+                      season_end_month: parseInt(seasonEndMonth, 10),
+                      season_end_day: parseInt(seasonEndDay, 10)
+                  })
+              });
+              if (!res.ok) throw new Error('DB保存失敗');
+              setTeamName(settingTeamName);
+              Swal.fire('保存完了', 'チーム情報（ロゴ・年度設定含む）をデータベースに保存しました。', 'success');
+          } catch (e) {
+              Swal.fire('エラー', 'データベースへの保存に失敗しました。', 'error');
+          }
+      }
+      setIsSavingTeam(false);
+  };
 
   const handleClearCache = () => {
       Swal.fire({
-          title: 'キャッシュを削除しますか？', text: "スマホで入力した未同期のテストデータ等が全て消去されます。", icon: 'warning',
+          title: 'キャッシュを削除しますか？', text: "ブラウザに残っている一時キャッシュデータを消去し、データベースから最新データを再取得します。", icon: 'warning',
           showCancelButton: true, confirmButtonColor: '#d33', cancelButtonColor: '#3085d6', confirmButtonText: 'はい、削除します', cancelButtonText: 'キャンセル'
       }).then((result) => {
           if (result.isConfirmed) {
-              localStorage.removeItem('logistars_mobile_logs'); setMobileHistoryLogs([]);
-              Swal.fire('削除完了', 'スマホ入力のキャッシュデータを全削除しました。', 'success').then(() => window.location.reload());
+              localStorage.removeItem('logistars_mobile_logs');
+              fetchAllResults();
+              Swal.fire('完了', 'キャッシュをクリアし、データベースから最新データを再取得しました。', 'success');
           }
       });
   };
@@ -347,7 +384,6 @@ const handleSaveTeamInfo = async () => {
       if (e && e.preventDefault) e.preventDefault();
       if (!playerForm.name || playerForm.name.trim() === '') { Swal.fire('入力エラー', '選手名は必須です', 'warning'); return; }
 
-      // ★復刻：デモ環境時は画面上（Reactステート）だけで仮想保存する
       if (dbStatus === 'error') {
           if (editingPlayer) { setPlayersData(sortPlayersList(playersData.map(p => p.id === editingPlayer.id ? { ...p, ...playerForm } : p))); } 
           else { setPlayersData(sortPlayersList([...playersData, { id: Date.now(), ...playerForm }])); }
@@ -387,7 +423,6 @@ const handleSaveTeamInfo = async () => {
   const handleRetirePlayer = (player) => { 
       Swal.fire({ title: `${player.name} 選手の退団処理`, input: 'date', showCancelButton: true, confirmButtonText: '退団を設定する' }).then(async (res) => { 
           if(res.isConfirmed) { 
-              // ★復刻：デモ環境の仮想保存
               if (dbStatus === 'error') {
                   setPlayersData(sortPlayersList(playersData.map(p => p.id === player.id ? { ...p, retirementDate: res.value } : p)));
                   return;
@@ -403,7 +438,6 @@ const handleSaveTeamInfo = async () => {
   const handleCancelRetire = (player) => { 
       Swal.fire({ title: '退団の取り消し', showCancelButton: true, confirmButtonText: '復帰させる' }).then(async (res) => { 
           if(res.isConfirmed) { 
-              // ★復刻：デモ環境の仮想保存
               if (dbStatus === 'error') {
                   setPlayersData(sortPlayersList(playersData.map(p => p.id === player.id ? { ...p, retirementDate: null } : p)));
                   return;
@@ -428,7 +462,6 @@ const handleSaveTeamInfo = async () => {
       e.preventDefault();
       if (!newGame.date || !newGame.opponent) { Swal.fire('入力エラー', '日付と対戦相手は必須です', 'warning'); return; }
 
-      // ★復刻：デモ環境の仮想保存
       if (dbStatus === 'error') {
           if (editingGame) { setGamesData(gamesData.map(g => g.id === editingGame.id ? { ...g, ...newGame } : g)); Swal.fire('更新完了', 'デモ環境で試合を更新しました。', 'success'); } 
           else { setGamesData([{ id: Date.now(), ...newGame, my_score: null, op_score: null }, ...gamesData]); Swal.fire('登録完了', 'デモ環境で試合を追加しました。', 'success'); }
@@ -453,7 +486,6 @@ const handleSaveTeamInfo = async () => {
           showCancelButton: true, confirmButtonColor: '#d33', cancelButtonColor: '#3085d6', confirmButtonText: '削除する', cancelButtonText: 'キャンセル'
       }).then(async (result) => {
           if (result.isConfirmed) {
-              // ★復刻：デモ環境の仮想削除
               if (dbStatus === 'error') {
                   setGamesData(gamesData.filter(g => g.id !== game.id));
                   const newLogs = mobileHistoryLogs.filter(log => String(log.game) !== String(game.id) && String(log.gameId) !== String(game.id));
@@ -470,7 +502,6 @@ const handleSaveTeamInfo = async () => {
   };
 
   const handleSaveScore = async (scoreData) => {
-      // ★復刻：デモ環境の仮想保存
       if (dbStatus === 'error') {
           const updatedGame = { ...selectedGame, my_score: scoreData.my_score, op_score: scoreData.op_score, status: scoreData.status, line_score: scoreData.line_score };
           setGamesData(gamesData.map(g => g.id === selectedGame.id ? updatedGame : g));
@@ -486,6 +517,7 @@ const handleSaveTeamInfo = async () => {
           } else { Swal.fire('エラー', '保存に失敗しました', 'error'); }
       } catch (err) { Swal.fire('エラー', '通信に失敗しました', 'error'); }
   };
+
   const handleExcelUpload = async (e) => {
       const file = e.target.files[0];
       if (!file || !selectedGame) return;
@@ -510,25 +542,26 @@ const handleSaveTeamInfo = async () => {
       const encodedUri = encodeURI(csvContent); const link = document.createElement("a"); link.setAttribute("href", encodedUri); link.setAttribute("download", `ロジスターズ_${type === 'batting' ? '打撃' : '投手'}フォーマット.csv`); document.body.appendChild(link); link.click(); document.body.removeChild(link);
   };
 
-  const handleLogin = (role, name) => {
+  const handleLogin = (role, name, dbUser = null) => {
       setUserRole(role);
       setUserName(name);
       setIsLoggedIn(true);
 
-      if (typeof window !== 'undefined') {
-          const savedUsers = JSON.parse(localStorage.getItem('logistars_users') || '[]');
-          const currentUser = savedUsers.find(u => u.username === name || u.email === name);
-          if (currentUser) {
-              if (currentUser.linkedPlayerId) {
-                  setLinkedPlayerId(currentUser.linkedPlayerId);
-              }
-              if (currentUser.mustChangePassword) {
-                  setMustChangePassword(true);
-                  setIsPasswordModalOpen(true);
-              } else {
-                  setMustChangePassword(false);
-              }
+      if (dbUser) {
+          setCurrentUserId(dbUser.id);
+          if (dbUser.linkedPlayerId) {
+              setLinkedPlayerId(dbUser.linkedPlayerId);
           }
+          if (dbUser.mustChangePassword) {
+              setMustChangePassword(true);
+              setIsPasswordModalOpen(true);
+          } else {
+              setMustChangePassword(false);
+          }
+      } else {
+          setCurrentUserId(null);
+          setLinkedPlayerId(null);
+          setMustChangePassword(false);
       }
 
       if (role === 'player') {
@@ -542,6 +575,7 @@ const handleSaveTeamInfo = async () => {
       setIsLoggedIn(false);
       setUserRole('');
       setUserName('');
+      setCurrentUserId(null);
       setLinkedPlayerId(null);
       setMustChangePassword(false);
       setActiveMenu('サマリーダッシュボード');
@@ -549,7 +583,7 @@ const handleSaveTeamInfo = async () => {
       setIsMobileInputOpen(false);
   };
 
-  const handlePasswordUpdate = () => {
+  const handlePasswordUpdate = async () => {
       if (!passwordForm.current || !passwordForm.new) { 
           Swal.fire('エラー', '入力されていない項目があります', 'error'); 
           return; 
@@ -562,29 +596,42 @@ const handleSaveTeamInfo = async () => {
           Swal.fire('エラー', '新しいパスワードが一致しません', 'error'); 
           return; 
       }
-      
-      const savedUsers = JSON.parse(localStorage.getItem('logistars_users') || '[]');
-      const userIndex = savedUsers.findIndex(u => u.username === userName || u.email === userName);
-      
-      if (userIndex !== -1) {
-          if (savedUsers[userIndex].password !== passwordForm.current) {
+      if (!currentUserId) {
+          Swal.fire('エラー', '復旧用アカウントのパスワードは変更できません', 'warning');
+          return;
+      }
+
+      try {
+          const checkRes = await fetch(`https://logistars-backend.onrender.com/api/users/${currentUserId}/`);
+          if (!checkRes.ok) throw new Error('ユーザー取得失敗');
+          const userData = await checkRes.json();
+
+          if (userData.password !== passwordForm.current) {
               Swal.fire('エラー', '現在のパスワードが間違っています', 'error');
               return;
           }
-          
-          savedUsers[userIndex].password = passwordForm.new;
-          savedUsers[userIndex].mustChangePassword = false; 
-          localStorage.setItem('logistars_users', JSON.stringify(savedUsers));
 
-          Swal.fire('変更完了', 'パスワードを設定しました！', 'success').then(() => {
-              setIsPasswordModalOpen(false);
-              setMustChangePassword(false);
-              setPasswordForm({ current: '', new: '', confirm: '' });
+          const updateRes = await fetch(`https://logistars-backend.onrender.com/api/users/${currentUserId}/`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                  password: passwordForm.new,
+                  mustChangePassword: false
+              })
           });
+
+          if (updateRes.ok) {
+              Swal.fire('変更完了', '新しいパスワードをデータベースに保存しました！', 'success').then(() => {
+                  setIsPasswordModalOpen(false);
+                  setMustChangePassword(false);
+                  setPasswordForm({ current: '', new: '', confirm: '' });
+              });
+          }
+      } catch (e) {
+          Swal.fire('通信エラー', 'パスワードの更新に失敗しました', 'error');
       }
   };
 
-  // メニュー一覧（退団選手記録を追加）
   const menuItems = userRole === 'player' 
     ? [
         { name: '選手ポータル', icon: '🏠', short: 'ホーム' },
@@ -609,7 +656,7 @@ const handleSaveTeamInfo = async () => {
         { name: '身体能力データ', icon: '🏃', short: '身体能力' },
         { name: '選手マスタ', icon: '👤', short: '選手' },
         { name: '設定', icon: '⚙️', short: '設定' },
-        { name: '退団選手記録', icon: '🎓', short: '退団者' } // ★追加
+        { name: '退団選手記録', icon: '🎓', short: '退団者' }
     ];
 
   const renderPlayerPortal = () => (
@@ -799,8 +846,7 @@ const handleSaveTeamInfo = async () => {
       )}
 
       {isMobileInputOpen && selectedGame ? (
-          // 【ここを書き換えてください！】
-<MobileInput game={selectedGame} players={activePlayersData} teamName={teamName} historyLogs={mobileHistoryLogs} setHistoryLogs={setMobileHistoryLogs} pitchingResults={gamePitchingResults} onBack={() => { setIsMobileInputOpen(false); setSelectedGame(null); }} loggedInPlayerId={linkedPlayerId} />
+          <MobileInput game={selectedGame} players={activePlayersData} teamName={teamName} historyLogs={mobileHistoryLogs} setHistoryLogs={setMobileHistoryLogs} pitchingResults={gamePitchingResults} onBack={() => { setIsMobileInputOpen(false); setSelectedGame(null); fetchAllResults(); }} loggedInPlayerId={linkedPlayerId} />
       ) : (
         <>
           <header className="bg-white text-slate-800 shrink-0 border-b border-slate-200 relative z-20 w-full">
@@ -853,10 +899,8 @@ const handleSaveTeamInfo = async () => {
             
             {activeMenu === '身体能力データ' && <PhysicalData players={playersData} userRole={userRole} linkedPlayerId={linkedPlayerId} />}
 
-            {/* 退団選手記録 */}
             {activeMenu === '退団選手記録' && <RetiredPlayers players={playersData} battingResults={allBattingResults} pitchingResults={allPitchingResults} games={gamesData} />}
 
-            {/* 設定画面 (adminのみ) */}
             {activeMenu === '設定' && userRole === 'admin' && (
               <div className="w-full animate-fade-in pb-20 font-sans">
                 <div className="bg-[#0b1c3a] text-white overflow-hidden shadow-md border-b border-blue-500">
@@ -967,14 +1011,18 @@ const handleSaveTeamInfo = async () => {
 
                     {settingsTab === 'account' && (
                         <div className="w-full max-w-5xl mx-auto mt-4">
-                            <Settings players={playersData} />
+                            <Settings 
+                                players={playersData} 
+                                teamId={teamId} 
+                                includeRetiredStats={includeRetiredStats} 
+                                onUpdateIncludeRetired={setIncludeRetiredStats} 
+                            />
                         </div>
                     )}
                 </div>
               </div>
             )}
 
-            {/* 選手マスタ画面 */}
             {activeMenu === '選手マスタ' && (
               <div className="p-4 md:p-6 animate-fade-in w-full">
                 <div className="bg-white border border-slate-200 rounded-lg shadow-sm">
@@ -1041,7 +1089,6 @@ const handleSaveTeamInfo = async () => {
               </div>
             )}
 
-            {/* 試合一覧 */}
             {activeMenu === '試合管理' && !selectedGame && (
               <div className="p-4 md:p-6 animate-fade-in space-y-4 w-full">
                 <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden mt-4">
@@ -1123,7 +1170,6 @@ const handleSaveTeamInfo = async () => {
               </div>
             )}
 
-            {/* 試合詳細・データ管理 */}
             {activeMenu === '試合管理' && selectedGame && (
                 <div className="p-4 md:p-6 animate-fade-in space-y-4 w-full">
                     <div className="flex items-center text-xs font-bold text-slate-500 mb-2">
@@ -1264,7 +1310,6 @@ const handleSaveTeamInfo = async () => {
         </>
       )}
 
-      {/* ★ パスワード変更モーダル（強制設定時は閉じられないように制御） */}
       {isPasswordModalOpen && (
           <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4 animate-fade-in">
               <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden flex flex-col">
@@ -1272,7 +1317,6 @@ const handleSaveTeamInfo = async () => {
                       <h3 className="text-white font-bold text-sm tracking-widest flex items-center gap-2">
                           <span>🔑</span> {mustChangePassword ? '初期パスワードの設定' : 'パスワード変更'}
                       </h3>
-                      {/* 強制変更時は ✕ボタンを非表示にする */}
                       {!mustChangePassword && (
                           <button onClick={() => setIsPasswordModalOpen(false)} className="text-blue-200 hover:text-white font-black">✕</button>
                       )}
@@ -1297,7 +1341,6 @@ const handleSaveTeamInfo = async () => {
                       </div>
                   </div>
                   <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-3 shrink-0">
-                      {/* 強制変更時は キャンセルボタンを非表示にする */}
                       {!mustChangePassword && (
                           <button onClick={() => setIsPasswordModalOpen(false)} className="px-4 py-2 text-xs font-bold text-slate-600 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 shadow-sm transition-colors">キャンセル</button>
                       )}
