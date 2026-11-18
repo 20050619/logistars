@@ -306,7 +306,7 @@ const handleSaveTeamInfo = async () => {
     
     setTeamName(settingTeamName);
     setIsSavingTeam(false);
-    Swal.fire('保存完了', 'チーム情報をデータベースに更新しました。', 'success').then(() => window.location.reload());
+    Swal.fire('保存完了', 'チーム情報をデータベースに更新しました。', 'success');
 };
 
   const handleClearCache = () => {
