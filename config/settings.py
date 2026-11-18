@@ -17,7 +17,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-!7^z4bf!^$@jdqi-(^2h5#8@!084fhrs$_(@%h=ug8-sqf04de'
 
 # ★修正: Render上では自動的にFalseになり、手元ではTrueになる賢い設定
-DEBUG = 'RENDER' not in os.environ
+DEBUG = True
 
 # ★修正: どのURLからのアクセスを許可するか
 ALLOWED_HOSTS = []
