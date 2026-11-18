@@ -280,24 +280,34 @@ export default function Home() {
       }
   };
 
-  const handleSaveTeamInfo = async () => {
-      setIsSavingTeam(true);
-      if (teamLogo) localStorage.setItem('logistars_team_logo', teamLogo);
-      else localStorage.removeItem('logistars_team_logo');
-      
-      localStorage.setItem('logistars_team_name', settingTeamName);
-      localStorage.setItem('logistars_season_start_month', seasonStartMonth);
-      localStorage.setItem('logistars_season_start_day', seasonStartDay);
-      localStorage.setItem('logistars_season_end_month', seasonEndMonth);
-      localStorage.setItem('logistars_season_end_day', seasonEndDay);
-      
-      setTeamName(settingTeamName);
+const handleSaveTeamInfo = async () => {
+    setIsSavingTeam(true);
+    if (teamLogo) localStorage.setItem('logistars_team_logo', teamLogo);
+    else localStorage.removeItem('logistars_team_logo');
+    
+    localStorage.setItem('logistars_team_name', settingTeamName);
+    localStorage.setItem('logistars_season_start_month', seasonStartMonth);
+    localStorage.setItem('logistars_season_start_day', seasonStartDay);
+    localStorage.setItem('logistars_season_end_month', seasonEndMonth);
+    localStorage.setItem('logistars_season_end_day', seasonEndDay);
 
-      setTimeout(() => {
-          setIsSavingTeam(false);
-          Swal.fire('保存完了', 'チーム情報を更新しました。', 'success').then(() => window.location.reload());
-      }, 600);
-  };
+    // ★データベース(Render)のチーム名も更新する処理を追加
+    if (teamId) {
+        try {
+            await fetch(`https://logistars-backend.onrender.com/api/teams/${teamId}/`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: settingTeamName })
+            });
+        } catch (e) {
+            console.error("DBのチーム名更新に失敗:", e);
+        }
+    }
+    
+    setTeamName(settingTeamName);
+    setIsSavingTeam(false);
+    Swal.fire('保存完了', 'チーム情報をデータベースに更新しました。', 'success').then(() => window.location.reload());
+};
 
   const handleClearCache = () => {
       Swal.fire({
